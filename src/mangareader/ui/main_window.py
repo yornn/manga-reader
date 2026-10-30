@@ -65,7 +65,9 @@ class MainWindow(QMainWindow):
         self.toolbar.setMovable(False)
         self.addToolBar(self.toolbar)
         self.crumb_label = QLabel()
-        self.crumb_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # the breadcrumb takes the leftover width and gets clipped, so the toolbar controls never overflow
+        self.crumb_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.crumb_label.setMinimumWidth(80)
         self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
         self.toolbar.addWidget(self.page_label)

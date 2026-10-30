@@ -41,3 +41,10 @@ def test_book_progress_survives_reopen(make_window, qtbot, tmp_path):
     w2 = make_window(qtbot)
     w2.open_paths([book])
     assert abs(w2.controller.position.page / len(w2.controller.source.pages) - ratio) < 0.1
+
+
+def test_toolbar_controls_fit_narrow_window(window, qtbot, tmp_path):
+    book = make_epub(tmp_path / "Очень длинное название книги, чтобы занять всю панель инструментов" / "b.epub", 50)
+    window.resize(700, 600)
+    window.open_paths([book])
+    qtbot.waitUntil(window.font_slider.isVisible, timeout=2000)
