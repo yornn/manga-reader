@@ -76,3 +76,15 @@ def test_toolbar_labels_do_not_overlap(window, qtbot, tmp_path):
     crumb, page = window.crumb_label, window.page_label
     assert crumb.width() >= 60 and crumb.geometry().right() < page.geometry().left()
     assert "…" in crumb.text()           # the long breadcrumb is shortened, not drawn over the buttons
+
+
+def test_reader_bar_never_hides_buttons(window, qtbot, tmp_path):
+    from helpers import encode, make_zip, page_image
+    folder = tmp_path / "Очень длинное название серии, чтобы занять всю панель инструментов"
+    window.open_paths([make_zip(folder / "Vol 01.cbz", {"1.png": encode(page_image(1), "PNG")})])
+    window.resize(400, 600)                                # as narrow as the reader allows
+    qtbot.wait(100)
+    for button in (window.home_button, window.focus_button, window.prev_chapter_button, window.page_label,
+                   window.next_chapter_button, window.gear_button):
+        assert button.isVisible(), button.text()           # nothing goes into a "»" overflow menu
+    assert "…" in window.crumb_label.text()

@@ -8,8 +8,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
-                               QSlider, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
+                               QSlider, QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
                                QWidgetAction)
 
 from mangareader.logging_setup import LOG_NAME
@@ -88,6 +88,28 @@ class _Pages(QStackedWidget):
         return page.sizeHint() if page is not None else super().sizeHint()
 
 
+class ReaderBar(QWidget):
+    """The reader's top bar. Buttons keep their place; only the breadcrumb gives way when the window is narrow."""
+
+    def __init__(self):
+        super().__init__()
+        self.setAutoFillBackground(True)           # it also floats over the page in the page-only mode
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(4, 2, 4, 2)
+        self._layout.setSpacing(2)
+
+    def add(self, widget: QWidget, stretch: int = 0) -> None:
+        if isinstance(widget, QToolButton):
+            widget.setAutoRaise(True)
+        self._layout.addWidget(widget, stretch)
+
+    def add_separator(self) -> None:
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setFrameShadow(QFrame.Sunken)
+        self._layout.addWidget(line)
+
+
 @contextmanager
 def _wait_cursor():
     QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -142,21 +164,21 @@ class MainWindow(QMainWindow):
 
     # -- layout ---------------------------------------------------------------------------------
     def _build_ui(self) -> None:
-        self.toolbar = QToolBar(self.tr("Панель"))
-        self.toolbar.setMovable(False)
+        # a plain bar, not a QToolBar: nothing may slide into a "»" menu, the breadcrumb shortens instead
+        self.toolbar = ReaderBar()
         self.home_button = QToolButton()
         self.home_button.setText(self.tr("⌂ Главная"))
         self.home_button.setToolTip(self.tr("Главная (Backspace)"))
         self.home_button.clicked.connect(self.go_home)
-        self.toolbar.addWidget(self.home_button)
+        self.toolbar.add(self.home_button)
         self.focus_button = QToolButton()
         self.focus_button.setText("◧")
         self.focus_button.setToolTip(self.tr("Только страница: спрятать панели (вернуть — эта кнопка или Esc)"))
         self.focus_button.clicked.connect(lambda: self.set_focus_mode(not self._focus))
-        self.toolbar.addWidget(self.focus_button)
-        self.toolbar.addSeparator()
+        self.toolbar.add(self.focus_button)
+        self.toolbar.add_separator()
         self.crumb_label = ElidedLabel()
-        self.toolbar.addWidget(self.crumb_label)
+        self.toolbar.add(self.crumb_label, stretch=1)
         self.prev_chapter_button = QToolButton()
         self.prev_chapter_button.setText(self.tr("‹ Глава"))
         self.prev_chapter_button.setToolTip(self.tr("Предыдущая глава (Ctrl+PgUp)"))
@@ -170,7 +192,7 @@ class MainWindow(QMainWindow):
         self.next_chapter_button.setToolTip(self.tr("Следующая глава (Ctrl+PgDn)"))
         self.next_chapter_button.clicked.connect(lambda: self.controller.next_chapter())
         for widget in (self.prev_chapter_button, self.page_label, self.next_chapter_button):
-            self.toolbar.addWidget(widget)
+            self.toolbar.add(widget)
         services = self.services
         self.nav_panel = NavPanel(services.loader, services.covers, services.store)
         self.nav_panel.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
@@ -273,17 +295,17 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Сохранить выделение"), self._enter, ["Return", "Enter"])
 
         bar = self.toolbar
-        bar.addSeparator()
+        bar.add_separator()
         snip_button = QToolButton()
         snip_button.setText("✂")
         snip_button.setToolTip(self.tr("Ножницы (S)"))
         snip_button.clicked.connect(self.selection.toggle)
-        bar.addWidget(snip_button)
+        bar.add(snip_button)
         save_button = QToolButton()
         save_button.setText("💾")
         save_button.setToolTip(self.tr("Сохранить (Ctrl+S)"))
         save_button.clicked.connect(lambda: self.save_current())
-        bar.addWidget(save_button)
+        bar.add(save_button)
         self._build_gear()
 
     def _build_gear(self) -> None:
@@ -312,7 +334,7 @@ class MainWindow(QMainWindow):
         self.gear_button.setToolTip(self.tr("Настройки чтения"))
         self.gear_button.setMenu(menu)
         self.gear_button.setPopupMode(QToolButton.InstantPopup)
-        self.toolbar.addWidget(self.gear_button)
+        self.toolbar.add(self.gear_button)
         self._brightness_save = QTimer(self)
         self._brightness_save.setSingleShot(True)
         self._brightness_save.setInterval(500)
