@@ -154,9 +154,9 @@ def test_ribbon_keeps_scroll_when_a_later_size_arrives(window, qtbot, tmp_path):
 
 
 def test_inside_drive_root():
-    from mangareader.ui.reader.controller import _inside
+    from mangareader.library.classify import is_inside
     root = Path(Path.cwd().anchor)
-    assert _inside(root / "manga" / "a.cbz", root) and not _inside(root, root)
+    assert is_inside(root / "manga" / "a.cbz", root) and not is_inside(root, root)
 
 
 def test_opened_file_missing_from_tree_keeps_its_own_list(window, qtbot, tmp_path):

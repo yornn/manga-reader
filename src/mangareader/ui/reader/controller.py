@@ -10,7 +10,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from mangareader.library.classify import (SeriesTree, SourceEntry, SourceInfo, TreeNode, chapter_spans,
-                                          entry_from_info, find_series_root, internal_chapters, is_volume_folder)
+                                          entry_from_info, find_series_root, internal_chapters, is_inside,
+                                          is_volume_folder)
 from mangareader.library.fingerprint import fingerprint
 from mangareader.library.model import ChapterMark, Kind, SeriesPrefs, SourceRecord
 from mangareader.library.scanner import scan_series
@@ -56,14 +57,6 @@ def make_services(data: DataLocation) -> Services:
     thumbs = ThumbnailStore(data.thumbs)
     return Services(data, settings, Store(data.db), SourceContext(claim.path, find_7zz()), cache, thumbs,
                     PageLoader(cache, thumbs), claim)
-
-
-def _inside(path: Path, folder: Path) -> bool:
-    p, f = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(folder))
-    try:
-        return p != f and os.path.commonpath([p, f]) == f   # also right for a drive root like E:\\
-    except ValueError:  # different drives
-        return False
 
 
 class _ScanTask(QRunnable):
@@ -145,7 +138,7 @@ class ReaderController(QObject):
         if path.is_dir() and not has_direct_images(path):
             root = path.parent if is_volume_folder(path) else path
             tree = scan_series(root, self.services.store, self.services.ctx)
-            inside = [e for e in tree.reading_order() if _inside(e.path, path)]
+            inside = [e for e in tree.reading_order() if is_inside(e.path, path)]
             if not inside:
                 self.error.emit("В папке нет страниц")
                 return False

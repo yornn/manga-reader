@@ -151,6 +151,14 @@ def _same(a: Path, b: Path) -> bool:
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
+def is_inside(path: Path, folder: Path) -> bool:
+    p, f = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(folder))
+    try:
+        return p != f and os.path.commonpath([p, f]) == f   # also right for a drive root like E:\\
+    except ValueError:  # different drives
+        return False
+
+
 @dataclass
 class SeriesTree:
     root: Path
