@@ -1,4 +1,4 @@
-"""The main window: toolbar, page area, page slider, menus and hotkeys."""
+"""The main window: the library page, the reader page (toolbar, panel, pages, slider), menus and hotkeys."""
 from __future__ import annotations
 
 import base64
@@ -9,12 +9,14 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
-                               QSlider, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
+                               QSlider, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
 from mangareader.sources.detect import OPENABLE_EXTS
-from mangareader.library.classify import suggest_chapter_number
+from mangareader.library.classify import SeriesTree, suggest_chapter_number
+from mangareader.library.library_scan import record_tree, series_path_for
+from mangareader.library.store import path_key
 from mangareader.export import writer
 from mangareader.export.encoders import EncodeOptions, OutFormat, Resize, encode_fragment, encode_page
 from mangareader.export.model import load_page_image
@@ -23,7 +25,8 @@ from mangareader.export.writer import ExportError
 from mangareader.library.model import Kind
 from mangareader.ui.dialogs import chapter_mark_dialog, errors
 from mangareader.ui.dialogs.save_dialog import SaveChoice, SaveDialog
-from mangareader.ui.dialogs.settings_dialog import SettingsDialog
+from mangareader.ui.library.page import UNAVAILABLE, LibraryPage
+from mangareader.ui.library.scan_runner import ScanRunner
 from mangareader.ui.reader.controller import ReaderController, Services
 from mangareader.ui.reader.layout import Direction, Mode
 from mangareader.render.loader import pil_to_qimage
@@ -33,7 +36,7 @@ from mangareader.ui.reader.selection import SelectionTool, pages_union, render_s
 from mangareader.ui.reader.nav_panel import NavPanel
 from mangareader.ui.reader.view import PageView, ZoomMode
 from mangareader.ui import style
-from mangareader.ui.theme import apply_theme
+from mangareader.ui.settings_page import SettingsPage
 from mangareader.ui.toast import Toast
 
 APP_TITLE = "Manga Reader"
@@ -92,18 +95,33 @@ class MainWindow(QMainWindow):
         self.controller.error.connect(self._show_error)
         self.controller.source_opened.connect(self._on_source_opened)
         self.controller.tree_changed.connect(self._on_tree_changed)
+        self.controller.state_changed.connect(self._touch)
+        self.controller.tree_scanned.connect(self._record_tree)
         self._slider_busy = False
         self._fallback_warned = False
+        self._series_id: int | None = None
+        self._series_path: Path | None = None
+        self._reader_actions: list[QAction] = []
+        self.scanner = ScanRunner(services, self)
         self._build_ui()
         self._build_actions()
+        self._build_library()
+        self._show_library()
         if services.settings.window_geometry:
             self.restoreGeometry(QByteArray(base64.b64decode(services.settings.window_geometry)))
+        if services.catalog.roots():
+            QTimer.singleShot(0, self.scanner.start)
 
     # -- layout ---------------------------------------------------------------------------------
     def _build_ui(self) -> None:
         self.toolbar = QToolBar(self.tr("Панель"))
         self.toolbar.setMovable(False)
-        self.addToolBar(self.toolbar)
+        self.home_button = QToolButton()
+        self.home_button.setText(self.tr("⌂ Главная"))
+        self.home_button.setToolTip(self.tr("Главная (Backspace)"))
+        self.home_button.clicked.connect(self.go_home)
+        self.toolbar.addWidget(self.home_button)
+        self.toolbar.addSeparator()
         self.crumb_label = ElidedLabel()
         self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
@@ -125,19 +143,48 @@ class MainWindow(QMainWindow):
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(0)
         self.slider.valueChanged.connect(self._on_slider)
-        central = QWidget()
-        layout = QVBoxLayout(central)
+        self.reader_page = QWidget()
+        layout = QVBoxLayout(self.reader_page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addWidget(self.toolbar)
         layout.addWidget(self.splitter, 1)
         self.bottom_bar = QHBoxLayout()
         self.bottom_bar.setContentsMargins(0, 0, 0, 0)
         self.bottom_bar.addWidget(self.slider, 1)
         layout.addLayout(self.bottom_bar)
-        self.setCentralWidget(central)
+        self.library_page = LibraryPage(self.services)
+        self.settings_page = SettingsPage(self.services)
+        self.library_page.set_settings_page(self.settings_page)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.library_page)
+        self.pages.addWidget(self.reader_page)
+        self.setCentralWidget(self.pages)
 
-    def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None, checkable=False) -> QAction:
+    def _build_library(self) -> None:
+        page, scanner = self.library_page, self.scanner
+        page.open_series.connect(self.open_series)
+        page.open_file_requested.connect(self._open_file_dialog)
+        page.open_folder_requested.connect(self._open_folder_dialog)
+        page.settings_requested.connect(self.show_settings)
+        page.refresh_requested.connect(scanner.start)
+        self.settings_page.roots_changed.connect(self._on_roots_changed)
+        self.settings_page.rescan_requested.connect(scanner.start)
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(300)
+        self._reload_timer.timeout.connect(page.reload)
+        scanner.started.connect(lambda: page.set_scanning(True))
+        scanner.series_updated.connect(self._reload_timer.start)
+        scanner.finished.connect(self._on_scan_finished)
+        page.reload()
+
+    def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None, checkable=False,
+                reader: bool = True) -> QAction:
+        """A menu item or hotkey; reader ones work only while the reader is shown."""
         action = QAction(text, self)
+        if reader:
+            self._reader_actions.append(action)
         if shortcut is not None:
             shortcuts = shortcut if isinstance(shortcut, list) else [shortcut]
             action.setShortcuts([QKeySequence(s) for s in shortcuts])
@@ -152,12 +199,13 @@ class MainWindow(QMainWindow):
     def _build_actions(self) -> None:
         c = self.controller
         file_menu = self.menuBar().addMenu(self.tr("Файл"))
-        self._action(self.tr("Открыть файл…"), self._open_file_dialog, "Ctrl+O", file_menu)
-        self._action(self.tr("Открыть папку…"), self._open_folder_dialog, "Ctrl+Shift+O", file_menu)
+        self._action(self.tr("Открыть файл…"), self._open_file_dialog, "Ctrl+O", file_menu, reader=False)
+        self._action(self.tr("Открыть папку…"), self._open_folder_dialog, "Ctrl+Shift+O", file_menu, reader=False)
         self.recent_menu = file_menu.addMenu(self.tr("Недавние"))
         self.recent_menu.aboutToShow.connect(self._fill_recent)
+        self._action(self.tr("Главная"), self.go_home, "Backspace", file_menu)
         file_menu.addSeparator()
-        self._action(self.tr("Выход"), self.close, None, file_menu)
+        self._action(self.tr("Выход"), self.close, None, file_menu, reader=False)
 
         view_menu = self.menuBar().addMenu(self.tr("Вид"))
         self.mode_menu = view_menu.addMenu(self.tr("Режим"))
@@ -174,8 +222,8 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Сдвиг разворота"), c.toggle_spread_offset, "O", view_menu)
         view_menu.addSeparator()
         self._action(self.tr("Показать или скрыть панель"), self._toggle_sidebar, "Tab", view_menu)
-        self._action(self.tr("Полный экран"), self._toggle_fullscreen, "F11", view_menu)
-        self._action(self.tr("Настройки…"), self._open_settings, None, view_menu)
+        self._action(self.tr("Полный экран"), self._toggle_fullscreen, "F11", view_menu, reader=False)
+        self._action(self.tr("Настройки…"), self.show_settings, None, view_menu, reader=False)
 
         self._action(self.tr("Влево"), lambda: self._arrow(left=True), "Left")
         self._action(self.tr("Вправо"), lambda: self._arrow(left=False), "Right")
@@ -233,21 +281,98 @@ class MainWindow(QMainWindow):
         self.font_box = font_box
         self.font_box.setVisible(False)
         self.bottom_bar.addWidget(font_box)
-        settings_button = QToolButton()
-        settings_button.setText("⚙")
-        settings_button.setToolTip(self.tr("Настройки"))
-        settings_button.clicked.connect(self._open_settings)
-        bar.addWidget(settings_button)
+
+    # -- pages ---------------------------------------------------------------------------------------
+    def is_library_shown(self) -> bool:
+        return self.pages.currentWidget() is self.library_page
+
+    def _set_reader_actions(self, enabled: bool) -> None:
+        for action in self._reader_actions:
+            action.setEnabled(enabled)
+
+    def _show_library(self) -> None:
+        self.pages.setCurrentWidget(self.library_page)
+        self._set_reader_actions(False)
+        self.setWindowTitle(APP_TITLE)
+
+    def _show_reader(self) -> None:
+        self.pages.setCurrentWidget(self.reader_page)
+        self._set_reader_actions(True)
+        self.view.setFocus()
+
+    def go_home(self) -> None:
+        if self.selection.active:
+            self.selection.deactivate()
+        self.controller.close_source()
+        self._series_id = None
+        self._series_path = None
+        self._show_library()
+        self.library_page.show_tiles()
+        self.library_page.reload()
+        self.library_page.grid.setFocus()
+
+    def show_settings(self) -> None:
+        if not self.is_library_shown():
+            self.go_home()
+        self.settings_page.refresh(self.scanner.failed)
+        self.library_page.show_settings()
+
+    def _on_roots_changed(self) -> None:
+        self.library_page.reload()
+        self.scanner.start()
+
+    def _on_scan_finished(self) -> None:
+        self.library_page.set_scanning(self.scanner.running)
+        self.library_page.reload()
+        self.settings_page.refresh(self.scanner.failed)
 
     # -- opening ------------------------------------------------------------------------------------
     def open_paths(self, paths) -> bool:
         paths = [Path(p) for p in paths]
         if not paths:
             return False
-        ok = self.controller.open_path(paths[0])
-        if ok:
-            save_settings(self.services.settings, self.services.data.settings_file)
-        return ok
+        path = paths[0]
+        roots = self.services.catalog.roots()
+        if any(path_key(path) == path_key(root.path) for root in roots):
+            Toast.show_message(self, self.tr("Это папка библиотеки — её серии уже на главной"))
+            return False
+        series, root_id = series_path_for(path, roots)
+        return self._open(path, series, root_id=root_id)
+
+    def open_series(self, series_id: int) -> bool:
+        card = self.services.catalog.card(series_id)
+        if card is None:
+            return False
+        if not card.available:
+            Toast.show_message(self, self.tr(UNAVAILABLE))
+            return False
+        return self._open(card.path, card.path, series_id=card.id)
+
+    def _open(self, path: Path, series: Path, *, root_id: int | None = None, series_id: int | None = None) -> bool:
+        previous = self._series_id, self._series_path
+        self._series_id = None                       # the old series must not get the new file's position
+        if not self.controller.open_path(path, series=series):
+            self._series_id, self._series_path = previous
+            return False
+        catalog = self.services.catalog
+        self._series_id = series_id if series_id is not None else catalog.ensure_series(series, root_id)
+        self._series_path = series
+        if self.controller.tree is not None:
+            self._record_tree(self.controller.tree)
+        self._touch()
+        self._show_reader()
+        save_settings(self.services.settings, self.services.data.settings_file)
+        return True
+
+    def _touch(self) -> None:
+        c = self.controller
+        if self._series_id is not None and c.record is not None and c.source is not None:
+            self.services.catalog.touch(self._series_id, c.record.id, c.where_parts())
+
+    def _record_tree(self, tree: SeriesTree) -> None:
+        if self._series_id is not None and self._series_path is not None and path_key(tree.root) == path_key(
+                self._series_path):
+            record_tree(self.services.catalog, self._series_id, tree)
 
     def _open_file_dialog(self) -> None:
         patterns = " ".join(f"*{ext}" for ext in sorted(OPENABLE_EXTS))
@@ -467,14 +592,6 @@ class MainWindow(QMainWindow):
         if self.isFullScreen():
             self.showNormal()
 
-    def _open_settings(self) -> None:
-        dialog = SettingsDialog(self, self.services.settings)
-        if dialog.exec():
-            dialog.apply_to(self.services.settings)
-            self.services.cache.set_budget(self.services.settings.cache_mb * 2**20)
-            apply_theme(QApplication.instance(), self.services.settings.theme)
-            save_settings(self.services.settings, self.services.data.settings_file)
-
     # -- labels ---------------------------------------------------------------------------------------
     def page_label_text(self) -> str:
         return self.controller.page_label()
@@ -516,6 +633,7 @@ class MainWindow(QMainWindow):
             save_settings(settings, self.services.data.settings_file)
         except OSError:
             pass
+        self.scanner.stop()
         self.controller.close_source()
         self.controller.blockSignals(True)        # a series scan finishing now must not touch the closed store
         QThreadPool.globalInstance().waitForDone(5000)

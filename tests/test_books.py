@@ -65,9 +65,11 @@ def test_book_thumbnails_follow_layout(window, qtbot, tmp_path):
 
 
 def test_toolbar_labels_do_not_overlap(window, qtbot, tmp_path):
-    book = make_epub(tmp_path / "Очень длинное название книги, чтобы занять всю панель инструментов" / "b.epub", 50)
+    from helpers import encode, make_zip, page_image
+    folder = tmp_path / "Очень длинное название серии, чтобы занять всю панель инструментов"
+    volume = make_zip(folder / "Vol 01.cbz", {"1.png": encode(page_image(1), "PNG")})
     window.resize(700, 600)
-    window.open_paths([book])
+    window.open_paths([volume])
     qtbot.wait(100)
     crumb, page = window.crumb_label, window.page_label
     assert crumb.width() >= 60 and crumb.geometry().right() < page.geometry().left()
