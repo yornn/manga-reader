@@ -9,10 +9,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
-from mangareader.library.classify import (SeriesTree, SourceEntry, SourceInfo, chapter_spans, entry_from_info,
-                                          find_series_root, internal_chapters, is_volume_folder)
+from mangareader.library.classify import (SeriesTree, SourceEntry, SourceInfo, TreeNode, chapter_spans,
+                                          entry_from_info, find_series_root, internal_chapters, is_volume_folder)
 from mangareader.library.fingerprint import fingerprint
-from mangareader.library.model import SeriesPrefs, SourceRecord
+from mangareader.library.model import ChapterMark, Kind, SeriesPrefs, SourceRecord
 from mangareader.library.scanner import scan_series
 from mangareader.library.store import Store
 from mangareader.paths import DataLocation, find_7zz
@@ -72,6 +72,7 @@ class _ScanTask(QRunnable):
 class ReaderController(QObject):
     state_changed = Signal()
     tree_changed = Signal()
+    source_opened = Signal()
     source_changed = Signal(str)
     error = Signal(str)
     _scan_done = Signal(object)
@@ -200,6 +201,7 @@ class ReaderController(QObject):
             progress = store.progress(self.record.id)
             start_page = source.page_for_token(progress.position) if progress else 0
         self.services.settings.add_recent(str(path))
+        self.source_opened.emit()
         self._rebuild_groups()
         self._show(max(0, min(start_page, len(source.pages) - 1)))
         return True
@@ -234,6 +236,7 @@ class ReaderController(QObject):
             if index is not None:
                 self.entries = tree.reading_order()
                 self.entry_index = index
+                self.refresh_entry_chapters()
         self.tree_changed.emit()
         self.state_changed.emit()
 
@@ -404,10 +407,54 @@ class ReaderController(QObject):
         return f"{self.page + 1}/{total}"
 
     def refresh_entry_chapters(self) -> None:
-        """Recompute the current entry's chapters after marks changed (internal spans come from the store)."""
+        """Recompute the current volume's chapters from the store (internal spans + manual marks)."""
         if self.record is None or self.entry is None:
             return
         record = self.services.store.find_by_path(self.record.path)
-        marks = self.services.store.chapter_marks(record.id)
-        if self.entry.kind.value == "volume":
-            self.entry.chapters = chapter_spans(record.chapters, marks)
+        if record is not None and self.entry.kind is Kind.VOLUME:
+            self.entry.chapters = chapter_spans(record.chapters, self.services.store.chapter_marks(record.id))
+
+    # -- marks and overrides -------------------------------------------------------------------------
+    def display_tree(self) -> SeriesTree | None:
+        if self.tree is not None:
+            return self.tree
+        if self.series_root is None or not self.entries:
+            return None
+        nodes = [TreeNode(e.kind, e.title, e.number, [e]) for e in self.entries]
+        return SeriesTree(self.series_root, self.series_root.name, nodes, [])
+
+    def marks(self) -> dict[int, ChapterMark]:
+        if self.record is None:
+            return {}
+        return {m.page_index: m for m in self.services.store.chapter_marks(self.record.id)}
+
+    def markable(self) -> bool:
+        return self.entry is not None and self.entry.kind is Kind.VOLUME
+
+    def add_chapter_mark(self, page: int, number: str, title: str = "") -> None:
+        if self.record is None:
+            return
+        self.services.store.set_chapter_mark(self.record.id, ChapterMark(page, number, title))
+        self._marks_changed()
+
+    def delete_chapter_mark(self, page: int) -> None:
+        if self.record is None:
+            return
+        self.services.store.delete_chapter_mark(self.record.id, page)
+        self._marks_changed()
+
+    def _marks_changed(self) -> None:
+        self.refresh_entry_chapters()
+        self.tree_changed.emit()
+        self.state_changed.emit()
+
+    def set_kind_override(self, entry_index: int, kind: Kind | None) -> None:
+        if not 0 <= entry_index < len(self.entries):
+            return
+        record_id = self.entries[entry_index].record_id
+        if record_id is None:
+            return
+        self.services.store.set_kind_override(record_id, kind)
+        if self.record is not None and self.record.id == record_id:
+            self.record = self.services.store.find_by_path(self.record.path)
+        self.rescan()

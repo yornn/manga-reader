@@ -12,11 +12,14 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, Q
 from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
 from mangareader.sources.detect import OPENABLE_EXTS
-from mangareader.ui.dialogs import errors
+from mangareader.library.classify import suggest_chapter_number
+from mangareader.library.model import Kind
+from mangareader.ui.dialogs import chapter_mark_dialog, errors
 from mangareader.ui.dialogs.settings_dialog import SettingsDialog
 from mangareader.ui.reader.controller import ReaderController, Services
 from mangareader.ui.reader.layout import Direction, Mode
 from mangareader.ui.reader.navigation import Position
+from mangareader.ui.reader.sidebar import Sidebar
 from mangareader.ui.reader.view import PageView, ZoomMode
 from mangareader.ui.theme import apply_theme
 from mangareader.ui.toast import Toast
@@ -36,6 +39,8 @@ class MainWindow(QMainWindow):
         self.controller.state_changed.connect(self._refresh_labels)
         self.controller.source_changed.connect(lambda title: Toast.show_message(self, title))
         self.controller.error.connect(self._show_error)
+        self.controller.source_opened.connect(self._on_source_opened)
+        self.controller.tree_changed.connect(self._on_tree_changed)
         self._slider_busy = False
         self._fallback_warned = False
         self._build_ui()
@@ -53,8 +58,19 @@ class MainWindow(QMainWindow):
         self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
         self.toolbar.addWidget(self.page_label)
+        self.sidebar = Sidebar(self.services.loader)
+        self.sidebar.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
+        self.sidebar.mark_requested.connect(self._add_mark)
+        self.sidebar.mark_edit_requested.connect(self._edit_mark)
+        self.sidebar.mark_delete_requested.connect(self.controller.delete_chapter_mark)
+        self.sidebar.kind_override_requested.connect(
+            lambda index, kind: self.controller.set_kind_override(index, Kind(kind) if kind else None))
+        self.sidebar.setVisible(self.services.settings.sidebar_visible)
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.addWidget(self.sidebar)
         self.splitter.addWidget(self.view)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([280, 1000])
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(0)
         self.slider.valueChanged.connect(self._on_slider)
@@ -103,6 +119,7 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Сменить направление чтения"), c.toggle_direction, "D", view_menu)
         self._action(self.tr("Сдвиг разворота"), c.toggle_spread_offset, "O", view_menu)
         view_menu.addSeparator()
+        self._action(self.tr("Показать или скрыть панель"), self._toggle_sidebar, "Tab", view_menu)
         self._action(self.tr("Полный экран"), self._toggle_fullscreen, "F11", view_menu)
         self._action(self.tr("Настройки…"), self._open_settings, None, view_menu)
 
@@ -193,6 +210,37 @@ class MainWindow(QMainWindow):
         if not self._slider_busy:
             self.controller.go_to(Position(self.controller.entry_index, value))
 
+    def _toggle_sidebar(self) -> None:
+        visible = not self.sidebar.isVisible()
+        self.sidebar.setVisible(visible)
+        self.services.settings.sidebar_visible = visible
+
+    # -- sidebar -----------------------------------------------------------------------------------
+    def _on_source_opened(self) -> None:
+        c = self.controller
+        self.sidebar.set_tree(c.display_tree())
+        self.sidebar.set_source(c.source_key, len(c.source.pages), c.marks(), c.markable())
+
+    def _on_tree_changed(self) -> None:
+        self.sidebar.set_tree(self.controller.display_tree())
+        self.sidebar.set_marks(self.controller.marks())
+        self.sidebar.set_current(self.controller.position)
+
+    def _add_mark(self, page: int) -> None:
+        entry = self.controller.entry
+        number = suggest_chapter_number(entry.chapters if entry else [], page)
+        answer = chapter_mark_dialog.ask_chapter_mark(self, number)
+        if answer:
+            self.controller.add_chapter_mark(page, *answer)
+
+    def _edit_mark(self, page: int) -> None:
+        mark = self.controller.marks().get(page)
+        if mark is None:
+            return
+        answer = chapter_mark_dialog.ask_chapter_mark(self, mark.number, mark.title)
+        if answer:
+            self.controller.add_chapter_mark(page, *answer)
+
     def _toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
@@ -229,6 +277,7 @@ class MainWindow(QMainWindow):
         self.slider.setInvertedAppearance(c.direction is Direction.RTL)
         self.slider.setValue(c.page)
         self._slider_busy = False
+        self.sidebar.set_current(c.position)
 
     def _show_error(self, message: str) -> None:
         errors.show_error(self, message, self.services.data.logs / LOG_NAME)
