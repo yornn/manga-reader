@@ -48,3 +48,17 @@ def test_toolbar_controls_fit_narrow_window(window, qtbot, tmp_path):
     window.resize(700, 600)
     window.open_paths([book])
     qtbot.waitUntil(window.font_slider.isVisible, timeout=2000)
+    # the font control lives in the bottom bar, which a crowded toolbar cannot push into its "»" menu
+    assert not window.toolbar.isAncestorOf(window.font_slider)
+
+
+def test_book_thumbnails_follow_layout(window, qtbot, tmp_path):
+    window.open_paths([make_epub(tmp_path / "b.epub", 400)])
+    c, loader = window.controller, window.services.loader
+    from mangareader.render.loader import pil_to_qimage
+    from mangareader.render.thumbs import ThumbnailStore
+    qtbot.waitUntil(lambda: loader.thumbnail(c.source_key, 0) is not None, timeout=5000)
+    c.set_font_size(22)
+    qtbot.waitUntil(lambda: loader.thumbnail(c.source_key, 0) is not None, timeout=5000)
+    fresh = pil_to_qimage(ThumbnailStore(tmp_path / "fresh").create(c.source, 0, "x"))
+    assert loader.thumbnail(c.source_key, 0) == fresh    # rendered for the current layout, not the old one

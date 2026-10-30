@@ -92,3 +92,15 @@ def test_epub_position_survives_reopen(tmp_path, ctx):
     assert second.page_for_token(token) == mid
     second.relayout(800, 1131, 20)
     assert abs(second.page_for_token(token) / len(second.pages) - mid / len(first.pages)) < 0.1
+
+
+def test_malformed_fb2_is_source_error(tmp_path, ctx):
+    (tmp_path / "garbage.fb2").write_text("<?xml version='1.0'?><FictionBook><body><p>x</p></bo", encoding="utf-8")
+    with pytest.raises(SourceError):
+        open_source(tmp_path / "garbage.fb2", ctx)
+
+
+def test_mupdf_documents_share_one_lock(tmp_path, ctx):
+    a = open_source(make_epub(tmp_path / "a.epub", 5), ctx)
+    b = open_source(make_pdf(tmp_path / "b.pdf", [encode(page_image(1), "PNG")]), ctx)
+    assert a._lock is b._lock          # MuPDF is not thread-safe across documents either

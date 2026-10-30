@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
 from mangareader.export.geometry import Placed
-from mangareader.render.loader import PageLoader
+from mangareader.render.loader import PRIORITY_PREFETCH, PageLoader
 from mangareader.ui.reader.layout import Direction
 
 CLICK_SLOP = 5
@@ -119,7 +119,7 @@ class PageView(QGraphicsView):
 
     # -- content ------------------------------------------------------------------
     def show_pages(self, key: str, placed: list[Placed], direction: Direction, ribbon: bool = False,
-                   focus_page: int | None = None) -> None:
+                   focus_page: int | None = None, anchor: tuple[int, float] | None = None) -> None:
         self.scene().clear()
         self._key, self._placed, self._direction, self._ribbon = key, list(placed), direction, ribbon
         self._items = {}
@@ -136,13 +136,15 @@ class PageView(QGraphicsView):
         self.scene().setSceneRect(bounds)
         self._visible_page = None
         self._apply_zoom()
-        if ribbon and focus_page is not None:
+        if ribbon and anchor is not None:
+            self.scroll_to_page(anchor[0], anchor[1])
+        elif ribbon and focus_page is not None:
             self.scroll_to_page(focus_page)
         else:
             self.verticalScrollBar().setValue(self.verticalScrollBar().minimum())
             h = self.horizontalScrollBar()
             h.setValue(h.maximum() if direction is Direction.RTL else h.minimum())
-        self._refresh.start()
+        self._request_images()          # cached copies appear at once, without a placeholder flash
         self.pages_shown.emit()
 
     def placed(self) -> list[Placed]:
@@ -171,25 +173,29 @@ class PageView(QGraphicsView):
         self._zoom_mode = ZoomMode.CUSTOM
         self._apply_zoom()
 
-    def _fit_height_basis(self) -> float:
-        if not self._placed:
-            return 1.0
-        if self._ribbon:
-            page = self._visible_page if self._visible_page is not None else self._placed[0].page
-            return next((p.h for p in self._placed if p.page == page), self._placed[0].h)
-        return max(p.y + p.h for p in self._placed) - min(p.y for p in self._placed)
+    def _fit_height_basis(self, placed: list[Placed], ribbon: bool) -> float:
+        if ribbon:
+            page = self._visible_page if self._visible_page is not None else placed[0].page
+            return next((p.h for p in placed if p.page == page), placed[0].h)
+        return max(p.y + p.h for p in placed) - min(p.y for p in placed)
 
     def _target_scale(self) -> float:
+        return self.scale_for(self._placed, self._ribbon)
+
+    def scale_for(self, placed: list[Placed], ribbon: bool = False) -> float:
+        # the scale the current zoom mode gives to this group of pages
         if self._zoom_mode is ZoomMode.CUSTOM:
             return self._custom_scale
         if self._zoom_mode is ZoomMode.ACTUAL:
             return 1 / self.devicePixelRatioF()
-        rect = self.scene().sceneRect()
-        if not self._placed or rect.width() <= 0:
+        if not placed:
+            return 1.0
+        width = max(p.x + p.w for p in placed) - min(p.x for p in placed)
+        if width <= 0:
             return 1.0
         vp = self.viewport()
-        by_width = vp.width() / rect.width()
-        by_height = vp.height() / self._fit_height_basis()
+        by_width = vp.width() / width
+        by_height = vp.height() / self._fit_height_basis(placed, ribbon)
         if self._zoom_mode is ZoomMode.FIT_WIDTH:
             return by_width
         if self._zoom_mode is ZoomMode.FIT_HEIGHT:
@@ -208,9 +214,18 @@ class PageView(QGraphicsView):
             area.adjust(0, -area.height(), 0, area.height())
         return [p.page for p in self._placed if area.intersects(QRectF(p.x, p.y, p.w, p.h))]
 
-    def _wanted_size(self, p: Placed) -> tuple[int, int]:
-        k = self.scale_factor() * self.devicePixelRatioF()
+    def _wanted_size(self, p: Placed, scale: float | None = None) -> tuple[int, int]:
+        k = (self.scale_factor() if scale is None else scale) * self.devicePixelRatioF()
         return min(round(p.w * k), p.orig_w) or 1, min(round(p.h * k), p.orig_h) or 1
+
+    def wanted_sizes(self, placed: list[Placed]) -> dict[int, tuple[int, int]]:
+        scale = self.scale_for(placed)
+        return {p.page: self._wanted_size(p, scale) for p in placed}
+
+    def prepare(self, key: str, placed: list[Placed]) -> None:
+        # build display copies of a group that is likely to be shown next
+        for page, size in self.wanted_sizes(placed).items():
+            self._loader.scaled(key, page, *size, priority=PRIORITY_PREFETCH)
 
     def _request_images(self) -> None:
         if self._key is None:
@@ -246,14 +261,23 @@ class PageView(QGraphicsView):
             item.set_error(message)
 
     # -- scrolling ------------------------------------------------------------------
-    def scroll_to_page(self, page: int) -> None:
+    def scroll_to_page(self, page: int, fraction: float = 0.0) -> None:
+        # put the given point of the page (0 = its top) at the top of the view
         target = next((p for p in self._placed if p.page == page), None)
         if target is None:
             return
-        top = self.mapFromScene(QPointF(target.x, target.y))
+        top = self.mapFromScene(QPointF(target.x, target.y + fraction * target.h))
         bar = self.verticalScrollBar()
         bar.setValue(bar.value() + top.y())
         self._visible_page = page
+
+    def ribbon_anchor(self) -> tuple[int, float] | None:
+        # which page is at the top of the view, and how far into it
+        top = self.mapToScene(QPoint(0, 0)).y()
+        for p in self._placed:
+            if p.y <= top < p.y + p.h:
+                return p.page, (top - p.y) / p.h
+        return None
 
     def _on_scrolled(self, _value: int) -> None:
         self._refresh.start()

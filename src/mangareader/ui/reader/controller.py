@@ -23,7 +23,7 @@ from mangareader.settings import Settings, load_settings
 from mangareader.sources import SourceContext, open_source
 from mangareader.sources.base import PageSource, PasswordRequired, SourceError
 from mangareader.sources.folder import has_direct_images
-from mangareader.sources.sevenzip import clear_extract_root
+from mangareader.sources.sevenzip import ExtractClaim, claim_extract_dir, release_extract_dir
 from mangareader.ui.reader.layout import Direction, Mode, group_index, place_group, place_ribbon, view_groups
 from mangareader.ui.reader.navigation import Position, chapter_starts, step, step_chapter
 from mangareader.ui.reader.view import PageView
@@ -42,19 +42,28 @@ class Services:
     cache: ImageCache
     thumbs: ThumbnailStore
     loader: PageLoader
+    extract_claim: ExtractClaim
+
+    def shutdown(self) -> None:
+        self.store.close()
+        release_extract_dir(self.extract_claim)
 
 
 def make_services(data: DataLocation) -> Services:
     settings = load_settings(data.settings_file)
-    clear_extract_root(data.extract)
+    claim = claim_extract_dir(data.extract)
     cache = ImageCache(settings.cache_mb * 2**20)
     thumbs = ThumbnailStore(data.thumbs)
-    return Services(data, settings, Store(data.db), SourceContext(data.extract, find_7zz()), cache, thumbs,
-                    PageLoader(cache, thumbs))
+    return Services(data, settings, Store(data.db), SourceContext(claim.path, find_7zz()), cache, thumbs,
+                    PageLoader(cache, thumbs), claim)
 
 
 def _inside(path: Path, folder: Path) -> bool:
-    return os.path.normcase(os.path.abspath(path)).startswith(os.path.normcase(os.path.abspath(folder)) + os.sep)
+    p, f = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(folder))
+    try:
+        return p != f and os.path.commonpath([p, f]) == f   # also right for a drive root like E:\\
+    except ValueError:  # different drives
+        return False
 
 
 class _ScanTask(QRunnable):
@@ -99,6 +108,7 @@ class ReaderController(QObject):
         self._relayout.setInterval(150)
         self._relayout.timeout.connect(self._apply_sizes)
         self._fingerprint = ""
+        self._book_layout = (0, 0, 0.0)
         self._book_relayout = QTimer(self)
         self._book_relayout.setSingleShot(True)
         self._book_relayout.setInterval(300)
@@ -184,7 +194,7 @@ class ReaderController(QObject):
         self.record = store.register(path, size, mtime, fp, len(source.pages), tuple(internal_chapters(source.pages)))
         self.source, self.source_key, self._fingerprint = source, str(path), fp
         self._layout_book()
-        self.services.loader.register(self.source_key, source, fp)
+        self.services.loader.register(self.source_key, source, self._thumb_key())
         if self.series_root is None or os.path.normcase(str(self.series_root)) != os.path.normcase(str(series_root)):
             self.series_root = series_root
             self.tree = None
@@ -237,13 +247,14 @@ class ReaderController(QObject):
         self._set_tree(tree)
 
     def _set_tree(self, tree: SeriesTree) -> None:
-        self.tree = tree
         if self.source is not None:
             index = tree.index_of(self.source.path)
-            if index is not None:
-                self.entries = tree.reading_order()
-                self.entry_index = index
-                self.refresh_entry_chapters()
+            if index is None:  # e.g. a .txt the scan skips: keep the list that holds just this file
+                return
+            self.entries = tree.reading_order()
+            self.entry_index = index
+        self.tree = tree
+        self.refresh_entry_chapters()
         self.tree_changed.emit()
         self.state_changed.emit()
 
@@ -264,15 +275,20 @@ class ReaderController(QObject):
             self.view.show_pages(self.source_key, place_ribbon(self.sizes), self.direction, ribbon=True,
                                  focus_page=page)
             neighbours = [page + 1, page + 2, page - 1]
+            self.services.loader.prefetch(self.source_key, [p for p in neighbours if 0 <= p < len(self.sizes)])
         else:
             gi = group_index(self.groups, page)
             self.page = self.groups[gi][0]
             self.view.show_pages(self.source_key, place_group(self.groups[gi], self.sizes, self.direction),
                                  self.direction)
-            neighbours = [p for g in (gi + 1, gi + 2, gi - 1) if 0 <= g < len(self.groups) for p in self.groups[g]]
-        self.services.loader.prefetch(self.source_key, [p for p in neighbours if 0 <= p < len(self.sizes)])
+            self._prepare_neighbours(gi)
         self._save_progress()
         self.state_changed.emit()
+
+    def _prepare_neighbours(self, gi: int) -> None:
+        for g in (gi + 1, gi + 2, gi - 1):
+            if 0 <= g < len(self.groups):
+                self.view.prepare(self.source_key, place_group(self.groups[g], self.sizes, self.direction))
 
     def _save_progress(self) -> None:
         if self.record is None or self.source is None:
@@ -288,10 +304,21 @@ class ReaderController(QObject):
         self._relayout.start()
 
     def _apply_sizes(self) -> None:
+        # re-show only if the pages on screen moved; otherwise just remember the sizes
         if self.source is None:
             return
         self._rebuild_groups()
-        self._show(self.page)
+        if self.mode is Mode.RIBBON:
+            placed = place_ribbon(self.sizes)
+            if placed != self.view.placed():
+                self.view.show_pages(self.source_key, placed, self.direction, ribbon=True, focus_page=self.page,
+                                     anchor=self.view.ribbon_anchor())
+            return
+        gi = group_index(self.groups, self.page)
+        if place_group(self.groups[gi], self.sizes, self.direction) != self.view.placed():
+            self._show(self.page)
+        else:
+            self._prepare_neighbours(gi)
 
     def _on_ribbon_page(self, page: int) -> None:
         if self.mode is Mode.RIBBON and self.source is not None:
@@ -303,8 +330,16 @@ class ReaderController(QObject):
     def _layout_book(self) -> None:
         # lay a reflowable book out for the current window and font size
         viewport = self.view.viewport()
-        self.source.relayout(max(200, viewport.width()), max(200, viewport.height()),
+        self._book_layout = (max(200, viewport.width()), max(200, viewport.height()),
                              self.services.settings.book_font_size)
+        self.source.relayout(*self._book_layout)
+
+    def _thumb_key(self) -> str:
+        # book pages change with the layout, so their thumbnails are keyed by it as well
+        if self.source is not None and self.source.is_reflowable:
+            w, h, font = self._book_layout
+            return f"{self._fingerprint}-{w}x{h}-{font:g}"
+        return self._fingerprint
 
     def _relayout_book(self) -> None:
         source = self.source
@@ -314,7 +349,7 @@ class ReaderController(QObject):
         self._layout_book()
         loader = self.services.loader
         loader.unregister(self.source_key)
-        loader.register(self.source_key, source, self._fingerprint)
+        loader.register(self.source_key, source, self._thumb_key())
         self.sizes = [None] * len(source.pages)
         loader.probe_sizes(self.source_key)
         self.source_opened.emit()
@@ -337,7 +372,7 @@ class ReaderController(QObject):
         return counts
 
     def go_to(self, pos: Position) -> None:
-        if not self.entries:
+        if not 0 <= pos.entry < len(self.entries):
             return
         if pos.entry == self.entry_index:
             if self.mode is Mode.RIBBON:

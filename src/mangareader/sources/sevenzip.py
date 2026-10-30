@@ -7,6 +7,8 @@ as they are written (the only fast way for solid archives).
 from __future__ import annotations
 
 import hashlib
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +42,27 @@ class ArchiveEntry:
     path: str
     size: int
     encrypted: bool
+
+
+_UNSAFE = re.compile(r'[:*?"<>|\x00-\x1f]')
+
+
+def _canonical(rel: str) -> str:
+    # 7-Zip on Windows replaces : * ? " < > | with "_", fixes trailing dots/spaces and prefixes reserved
+    # names (CON, NUL...) with "_"; reduce both sides to the same form to find the extracted file
+    parts = [_UNSAFE.sub("_", part).rstrip(" ._").lstrip("_") for part in rel.replace("\\", "/").split("/")]
+    return "/".join(parts).casefold()
+
+
+def resolve_extracted(dest: Path, inner: str) -> Path | None:
+    direct = dest / inner
+    if direct.exists():
+        return direct
+    wanted = _canonical(inner)
+    for path in dest.rglob("*"):
+        if path.is_file() and _canonical(path.relative_to(dest).as_posix()) == wanted:
+            return path
+    return None
 
 
 def _parse_listing(text: str) -> list[ArchiveEntry]:
@@ -77,8 +100,11 @@ class Extraction:
 
     def _written(self, inner: str) -> bool:
         expected = self._sizes.get(inner)
+        path = resolve_extracted(self._dest, inner)
+        if path is None:
+            return False
         try:
-            actual = (self._dest / inner).stat().st_size
+            actual = path.stat().st_size
         except OSError:
             return False
         return expected is None or actual == expected
@@ -141,9 +167,23 @@ class SevenZip:
         if r.returncode != 0:
             raise SourceError("Архив повреждён или не поддерживается")
         entries = _parse_listing(out)
-        if not password and any(e.encrypted for e in entries):
+        encrypted = [e for e in entries if e.encrypted]
+        if encrypted and not password:
             raise PasswordRequired(wrong=False)
+        if encrypted:
+            self._check_password(archive, password, encrypted)
         return entries
+
+    def _check_password(self, archive: Path, password: str, encrypted: list[ArchiveEntry]) -> None:
+        # with unencrypted headers any password lists fine; test the smallest encrypted file to know
+        plain = [e for e in encrypted if not any(c in e.path for c in "*?[]")]
+        args = [str(self.exe), "t", "-sccUTF-8", f"-p{password}", str(archive)]
+        if plain:
+            args.append(min(plain, key=lambda e: e.size).path)
+        r = subprocess.run(args, capture_output=True, **_popen_kwargs())
+        messages = r.stdout.decode("utf-8", "replace") + "\n" + r.stderr.decode("utf-8", "replace")
+        if r.returncode != 0 and any(m in messages for m in _PASSWORD_MARKERS):
+            raise PasswordRequired(wrong=True)
 
     def start_extract(self, archive: Path, dest: Path, password: str | None,
                       sizes: Mapping[str, int] | None = None) -> Extraction:
@@ -170,6 +210,67 @@ def prune_extract_root(root: Path, limit_bytes: int = EXTRACT_LIMIT, in_use=froz
             continue
         shutil.rmtree(d, ignore_errors=True)
         total -= size
+
+
+LOCK_NAME = ".owner.lock"
+
+
+@dataclass
+class ExtractClaim:
+    """This program run's own extraction folder; the open lock file marks it as in use."""
+    path: Path
+    handle: object
+
+
+def _in_use(folder: Path) -> bool:
+    lock = folder / LOCK_NAME
+    if not lock.exists():
+        return False
+    if sys.platform == "win32":
+        try:
+            lock.unlink()  # fails while the owning process keeps the file open
+            return False
+        except OSError:
+            return True
+    import fcntl
+
+    try:
+        with open(lock, "a") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return True
+
+
+def claim_extract_dir(root: Path) -> ExtractClaim:
+    """Remove folders left by finished runs and create a locked one for this run."""
+    root.mkdir(parents=True, exist_ok=True)
+    for child in root.iterdir():
+        if child.is_dir():
+            if not _in_use(child):
+                shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+    path = root / f"run-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    path.mkdir()
+    handle = open(path / LOCK_NAME, "a")
+    if sys.platform != "win32":
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return ExtractClaim(path, handle)
+
+
+def release_extract_dir(claim: ExtractClaim) -> None:
+    try:
+        claim.handle.close()
+    except OSError:
+        pass
+    shutil.rmtree(claim.path, ignore_errors=True)
 
 
 def clear_extract_root(root: Path) -> None:
@@ -199,9 +300,12 @@ class SevenZipSource(PageSource):
         self._lock = threading.Lock()
         self._extraction: Extraction | None = None
         self._dest: Path | None = None
+        self._closed = False
 
     def _ensure_extraction(self) -> Extraction:
         with self._lock:
+            if self._closed:
+                raise SourceError("Файл уже закрыт")
             if self._extraction is None:
                 st = self.path.stat()
                 key = hashlib.sha1(f"{self.path.resolve()}|{st.st_size}|{st.st_mtime}".encode()).hexdigest()[:16]
@@ -215,7 +319,7 @@ class SevenZipSource(PageSource):
 
     def _disk_path(self, inner: str) -> Path:
         base = self._dest.resolve()
-        p = (base / inner).resolve()
+        p = (resolve_extracted(base, inner) or base / inner).resolve()
         if not p.is_relative_to(base):
             raise SourceError("Недопустимый путь внутри архива")
         return p
@@ -227,8 +331,9 @@ class SevenZipSource(PageSource):
         return self._wait(i, timeout)
 
     def read_original(self, i: int) -> Original:
-        if not self._wait(i, None):
-            if self._extraction.error == "wrong_password":
+        extraction = self._ensure_extraction()
+        if not extraction.wait_file(self.pages[i].inner_path, None):
+            if extraction.error == "wrong_password":
                 raise PasswordRequired(wrong=True)
             raise SourceError("Не удалось распаковать страницу")
         try:
@@ -237,7 +342,10 @@ class SevenZipSource(PageSource):
             raise SourceError("Не удалось прочитать страницу: файл недоступен") from e
 
     def _read_head(self, i: int, n: int = 65536) -> bytes | None:
-        if not self._wait(i, 0):
+        try:
+            if not self._wait(i, 0):
+                return None
+        except SourceError:
             return None
         try:
             with open(self._disk_path(self.pages[i].inner_path), "rb") as f:
@@ -246,12 +354,16 @@ class SevenZipSource(PageSource):
             return None
 
     def page_size(self, i: int) -> tuple[int, int] | None:
-        if not self._wait(i, 0):
+        try:
+            if not self._wait(i, 0):
+                return None
+        except SourceError:
             return None
         return super().page_size(i)
 
     def close(self) -> None:
         with self._lock:
+            self._closed = True
             if self._extraction is not None:
                 self._extraction.cancel()
                 shutil.rmtree(self._dest, ignore_errors=True)

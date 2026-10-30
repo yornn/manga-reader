@@ -9,6 +9,7 @@ from enum import StrEnum
 from PIL import Image
 
 from mangareader.export.model import PageImage
+from mangareader.export.writer import ExportError
 from mangareader.imaging import Decoded, resize_lanczos
 from mangareader.sources.base import Original
 
@@ -36,6 +37,7 @@ PRESET_LABELS = {"max": "Максимум", "high": "Высокое", "medium": 
 _EXT = {OutFormat.PNG: ".png", OutFormat.JPEG: ".jpg", OutFormat.WEBP: ".webp", OutFormat.AVIF: ".avif",
         OutFormat.TIFF: ".tif", OutFormat.BMP: ".bmp"}
 _ICC_FORMATS = {OutFormat.PNG, OutFormat.JPEG, OutFormat.WEBP, OutFormat.AVIF, OutFormat.TIFF}
+_MAX_SIDE = {"WEBP": 16383, "JPEG": 65500}
 
 
 @dataclass(frozen=True)
@@ -71,8 +73,15 @@ def apply_resize(img: Image.Image, resize: Resize) -> Image.Image:
 
 
 def _save(img: Image.Image, fmt: str, **kw) -> bytes:
+    limit = _MAX_SIDE.get(fmt)
+    if limit and max(img.size) > limit:
+        raise ExportError(f"{fmt} не поддерживает картинки больше {limit} пикселей по стороне. "
+                          "Выберите PNG или уменьшите размер.")
     buf = io.BytesIO()
-    img.save(buf, fmt, **{k: v for k, v in kw.items() if v is not None})
+    try:
+        img.save(buf, fmt, **{k: v for k, v in kw.items() if v is not None})
+    except (ValueError, OSError, TypeError) as e:
+        raise ExportError(f"Не удалось сохранить в формате {fmt}") from e
     return buf.getvalue()
 
 

@@ -1,6 +1,7 @@
 """`MangaReader --self-test`: checks that a build can open, render and export everything."""
 from __future__ import annotations
 
+import base64
 import io
 import subprocess
 import sys
@@ -53,6 +54,21 @@ def _check_7z(tmp: Path) -> None:
                    stdin=subprocess.DEVNULL, capture_output=True, **_no_window())
     with open_source(tmp / "sample.cb7", SourceContext(tmp / "extract", exe)) as source:
         assert source.read_original(0).data == (stage / "001.jpg").read_bytes()
+
+
+# rar5-solid.rar from the rarfile test suite (ISC licence, see tests/fixtures/rar/README.md)
+_RAR5_SAMPLE = base64.b64decode("UmFyIRoHAQAJ78hvCwEFBwQGAQGAgIAA3vVwchwCAroABIAQtoMCoua3xYAbAQpzdGVzdDEudHh0waw3REQj+iP2l/1iU1G+TJGBQQKMwQN5XL9Ho6otoDaT3aBYAEACANRQBHb2xH8y6p8ypcTM14PfABDoLYkcAgKNAASAELaDAqLmt8XAGwEKc3Rlc3QyLnR4dEUVCmABAAgD37f79vwdd1ZRAwUEAA==")
+
+
+def _check_rar(tmp: Path) -> None:
+    from mangareader.sources.sevenzip import SevenZip
+
+    exe = find_7zz()
+    assert exe is not None, "7zz не найден"
+    (tmp / "sample.rar").write_bytes(_RAR5_SAMPLE)
+    seven = SevenZip(exe)
+    assert {e.path for e in seven.list(tmp / "sample.rar", None)} == {"stest1.txt", "stest2.txt"}
+    assert seven.start_extract(tmp / "sample.rar", tmp / "rar-out", None).wait_file("stest2.txt", 30)
 
 
 def _check_pdf(tmp: Path) -> None:
@@ -123,6 +139,7 @@ def run(report: Path) -> int:
         steps = [
             ("zip", lambda: _check_zip(tmp)),
             ("7z", lambda: _check_7z(tmp)),
+            ("rar", lambda: _check_rar(tmp)),
             ("pdf", lambda: _check_pdf(tmp)),
             ("avif", lambda: _check_codec("AVIF")),
             ("jxl", lambda: _check_codec("JXL")),

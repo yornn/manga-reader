@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QTimer, QUrl
@@ -34,6 +36,16 @@ from mangareader.ui.theme import apply_theme
 from mangareader.ui.toast import Toast
 
 APP_TITLE = "Manga Reader"
+log = logging.getLogger("mangareader.ui")
+
+
+@contextmanager
+def _wait_cursor():
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 class MainWindow(QMainWindow):
@@ -92,7 +104,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.splitter, 1)
-        layout.addWidget(self.slider)
+        self.bottom_bar = QHBoxLayout()
+        self.bottom_bar.setContentsMargins(0, 0, 0, 0)
+        self.bottom_bar.addWidget(self.slider, 1)
+        layout.addLayout(self.bottom_bar)
         self.setCentralWidget(central)
 
     def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None, checkable=False) -> QAction:
@@ -189,8 +204,9 @@ class MainWindow(QMainWindow):
         self._font_timer.timeout.connect(lambda: self.controller.set_font_size(self.font_slider.value()))
         self.font_slider.valueChanged.connect(lambda _: self._font_timer.start())
         font_layout.addWidget(self.font_slider)
-        self.font_action = bar.addWidget(font_box)
-        self.font_action.setVisible(False)
+        self.font_box = font_box
+        self.font_box.setVisible(False)
+        self.bottom_bar.addWidget(font_box)
         settings_button = QToolButton()
         settings_button.setText("⚙")
         settings_button.setToolTip(self.tr("Настройки"))
@@ -263,7 +279,7 @@ class MainWindow(QMainWindow):
     # -- sidebar -----------------------------------------------------------------------------------
     def _on_source_opened(self) -> None:
         c = self.controller
-        self.font_action.setVisible(bool(c.source and c.source.is_reflowable))
+        self.font_box.setVisible(bool(c.source and c.source.is_reflowable))
         self.sidebar.set_tree(c.display_tree())
         self.sidebar.set_source(c.source_key, len(c.source.pages), c.marks(), c.markable())
 
@@ -307,11 +323,8 @@ class MainWindow(QMainWindow):
         rect = self.selection.rect() if self.selection.active else None
         if rect is None:
             rect = pages_union(self._target_placed())
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
+        with _wait_cursor():
             return render_selection(self.controller.source, self.view.placed(), rect)
-        finally:
-            QApplication.restoreOverrideCursor()
 
     def copy_to_clipboard(self) -> None:
         if self.controller.source is None:
@@ -320,6 +333,10 @@ class MainWindow(QMainWindow):
             image, _ = self._render_target()
         except SourceError as e:
             self._show_error(str(e))
+            return
+        except Exception:
+            log.exception("copy failed")
+            self._show_error(self.tr("Не удалось скопировать: непредвиденная ошибка"))
             return
         QGuiApplication.clipboard().setImage(pil_to_qimage(image))
         Toast.show_message(self, self.tr("Скопировано в буфер обмена"))
@@ -357,6 +374,17 @@ class MainWindow(QMainWindow):
         return dialog.choice()
 
     def save_current(self, quick: bool = False) -> list[Path]:
+        try:
+            return self._save_current(quick)
+        except (ExportError, SourceError) as e:
+            errors.show_error(self, str(e), self.services.data.logs / LOG_NAME)
+        except Exception:
+            log.exception("saving failed")
+            errors.show_error(self, self.tr("Не удалось сохранить: непредвиденная ошибка"),
+                              self.services.data.logs / LOG_NAME)
+        return []
+
+    def _save_current(self, quick: bool) -> list[Path]:
         c = self.controller
         if c.source is None:
             return []
@@ -371,25 +399,18 @@ class MainWindow(QMainWindow):
         else:
             pages = group
         jpeg_source = all(c.source.pages[p].ext in (".jpg", ".jpeg") for p in pages) if pages else False
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
+        with _wait_cursor():
             if fragment or is_spread:
                 image, sources = self._render_target()
                 estimate = lambda o: len(encode_fragment(image, sources, o).data)  # noqa: E731
             else:
                 page_image = load_page_image(c.source, group[0])
                 estimate = lambda o: len(encode_page(page_image, o).data)  # noqa: E731
-        except SourceError as e:
-            QApplication.restoreOverrideCursor()
-            self._show_error(str(e))
-            return []
-        QApplication.restoreOverrideCursor()
         choice = self._choose(quick, default_name=default_name, is_spread=is_spread, is_fragment=fragment,
                               jpeg_source=jpeg_source, estimate=estimate)
         if choice is None:
             return []
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
+        with _wait_cursor():
             if fragment or (is_spread and choice.spread_layout == "stitched"):
                 outputs = [(choice.filename, encode_fragment(image, sources, choice.options))]
             elif is_spread:
@@ -402,11 +423,6 @@ class MainWindow(QMainWindow):
                 path = writer.unique_path(choice.folder, name, encoded.ext)
                 writer.write_atomic(path, encoded.data)
                 written.append(path)
-        except (ExportError, SourceError) as e:
-            QApplication.restoreOverrideCursor()
-            errors.show_error(self, str(e), self.services.data.logs / LOG_NAME)
-            return []
-        QApplication.restoreOverrideCursor()
         save_settings(self.services.settings, self.services.data.settings_file)
         folder = choice.folder
         Toast.show_message(self, self.tr("Сохранено: ") + ", ".join(p.name for p in written),
@@ -473,5 +489,5 @@ class MainWindow(QMainWindow):
             pass
         self.controller.close_source()
         QThreadPool.globalInstance().waitForDone(5000)
-        self.services.store.close()
+        self.services.shutdown()
         super().closeEvent(event)

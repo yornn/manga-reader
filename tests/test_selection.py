@@ -85,3 +85,15 @@ def test_copy_without_selection_copies_page(window, qtbot, cbz_1000x1500):
     window.open_paths([cbz_1000x1500])
     qtbot.keyClick(window.view, Qt.Key_C, Qt.ControlModifier)
     assert QGuiApplication.clipboard().image().width() == 1000
+
+
+def test_render_uses_real_page_size_when_layout_guessed(tmp_path, ctx):
+    from helpers import encode, make_zip, page_image
+    from mangareader.export.geometry import Placed
+    from mangareader.sources import open_source
+    from mangareader.ui.reader.selection import render_selection
+    real = page_image(4, (600, 900))
+    src = open_source(make_zip(tmp_path / "a.cbz", {"1.png": encode(real, "PNG")}), ctx)
+    guessed = [Placed(0, 0, 0, 1000, 1500, 1000, 1500)]       # size not known yet: default 1000×1500
+    image, _ = render_selection(src, guessed, QRectF(0, 0, 500, 750))
+    assert image.size == (300, 450) and image.tobytes() == real.crop((0, 0, 300, 450)).tobytes()

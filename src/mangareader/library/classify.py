@@ -1,6 +1,7 @@
 """Turning a series folder into a tree of volumes and chapters (spec 5.1)."""
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
@@ -13,6 +14,8 @@ from mangareader.sources.base import PageRef, SourceError, is_junk
 from mangareader.sources.detect import SOURCE_EXTS
 from mangareader.sources.folder import has_direct_images
 from mangareader.sources.natsort import natural_key
+
+log = logging.getLogger("mangareader.classify")
 
 START_TITLE = "Начало"
 VOLUME_PAGES = 100
@@ -27,7 +30,7 @@ _NUMBER_BY_KIND = {
     Kind.VOLUME: [re.compile(rf"{_VOL_WORD}\s*{_NUM}", re.IGNORECASE), re.compile(rf"第\s*{_NUM}\s*巻")],
 }
 _ANY_JP_NUMBER = re.compile(rf"第\s*{_NUM}\s*[話巻]")
-_FIRST_NUMBER = re.compile(_NUM)
+_ANY_NUMBER = re.compile(_NUM)
 _BRACKETS = re.compile(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}")
 _PLAIN_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
@@ -48,12 +51,13 @@ def _normalize_number(text: str) -> str:
 
 def extract_number(name: str, kind: Kind | None = None) -> str | None:
     text = _BRACKETS.sub(" ", name)
-    patterns = list(_NUMBER_BY_KIND.get(kind, [])) + [_ANY_JP_NUMBER, _FIRST_NUMBER]
-    for pattern in patterns:
+    for pattern in list(_NUMBER_BY_KIND.get(kind, [])) + [_ANY_JP_NUMBER]:
         m = pattern.search(text)
         if m:
             return _normalize_number(m.group(1))
-    return None
+    # no keyword: take the last number, so "Kaiju No. 8 - 012" is chapter 12, not 8
+    numbers = _ANY_NUMBER.findall(text)
+    return _normalize_number(numbers[-1]) if numbers else None
 
 
 def _number_value(number: str | None) -> float:
@@ -247,6 +251,10 @@ def classify_series(root: Path, probe: Callable[[Path], SourceInfo]) -> SeriesTr
             info = probe(path)
         except SourceError as e:
             failed.append((path, str(e)))
+            return None
+        except Exception as e:  # one unreadable file must not sink the whole series
+            log.warning("cannot read %s: %r", path, e)
+            failed.append((path, "Файл повреждён или не поддерживается"))
             return None
         if info.page_count == 0 and not info.locked:
             return None

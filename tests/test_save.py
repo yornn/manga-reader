@@ -152,3 +152,19 @@ def test_name_uses_chapter_of_current_volume(window, qtbot, tmp_path):
     fields = window.default_name_fields(0)
     assert (fields.series, fields.volume, fields.chapter, fields.page) == ("Серия", "2", "3", 1)
     assert window.default_name_fields(2).chapter == "4"
+
+
+def test_save_failure_restores_cursor(window, tmp_path, monkeypatch, cbz_1000x1500):
+    from PySide6.QtWidgets import QApplication
+    from mangareader.export import encoders
+    window.open_paths([cbz_1000x1500])
+    window.services.settings.export.folder = str(tmp_path)
+
+    def boom(*a, **k):
+        raise ValueError("encoder exploded")
+    monkeypatch.setattr(encoders, "encode_image", boom)
+    window.services.settings.export.fmt = "webp"
+    shown = []
+    monkeypatch.setattr(errors, "show_error", lambda p, m, l: shown.append(m))
+    assert window.save_current(quick=True) == []
+    assert QApplication.overrideCursor() is None and shown

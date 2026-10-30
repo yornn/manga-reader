@@ -42,3 +42,7 @@ def test_write_error_is_russian(tmp_path, monkeypatch):
     with pytest.raises(ExportError, match="места"):
         write_atomic(tmp_path / "x.png", b"1")
     assert not list(tmp_path.iterdir())
+
+
+def test_empty_series_is_dropped():
+    assert render_name(DEFAULT_TEMPLATE, NameFields("", None, "1", 3, 10)) == "Гл 01 – стр 003"

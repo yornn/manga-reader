@@ -47,7 +47,7 @@ def render_name(template: str, fields: NameFields) -> str:
             key = m.group(1)
             if key not in values:
                 return m.group(0)
-            if values[key] is None:
+            if not values[key]:
                 missing = True
                 return ""
             return values[key]

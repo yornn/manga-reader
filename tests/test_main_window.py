@@ -93,3 +93,80 @@ def test_recent_and_no_qsettings(window, tmp_path):
     assert window.services.settings.recent[0] == str(s / "c001.cbz")
     sources = Path(mangareader.__file__).parent.rglob("*.py")
     assert not any("QSettings" in p.read_text(encoding="utf-8") for p in sources)
+
+
+def test_flip_back_shows_cached_page_immediately(window, qtbot, cbz_spread):
+    from mangareader.ui.reader.layout import place_group
+    window.open_paths([cbz_spread])
+    c, view, loader = window.controller, window.view, window.services.loader
+    qtbot.waitUntil(lambda: view.page_item(0).has_scaled_image(), timeout=5000)
+    window.controller.next()
+    qtbot.waitUntil(lambda: view.page_item(1).has_scaled_image(), timeout=5000)
+    size = view.wanted_sizes(place_group([0], c.sizes, c.direction))[0]
+    qtbot.waitUntil(lambda: loader.has_scaled(c.source_key, 0, *size), timeout=5000)   # page 0 is cached
+    window.controller.prev()
+    assert view.page_item(0).has_scaled_image()          # no "Загрузка…" flash for a cached page
+
+
+def test_next_page_is_prepared_before_flip(window, qtbot, cbz_spread):
+    from mangareader.ui.reader.layout import place_group
+    window.open_paths([cbz_spread])
+    c, view, loader = window.controller, window.view, window.services.loader
+    qtbot.waitUntil(lambda: view.page_item(0).has_scaled_image(), timeout=5000)
+    qtbot.waitUntil(lambda: c.sizes[1] is not None, timeout=5000)
+    size = view.wanted_sizes(place_group([1], c.sizes, c.direction))[1]
+    qtbot.waitUntil(lambda: loader.has_scaled(c.source_key, 1, *size), timeout=5000)
+    c.next()
+    assert view.page_item(1).has_scaled_image()
+
+
+def test_late_page_sizes_do_not_reset_selection(window, qtbot, tmp_path):
+    from PySide6.QtCore import QRectF
+    arc = make_7z(tmp_path / "S" / "v.cb7",
+                  {f"{i:03}.png": encode(page_image(i, (1000, 1500)), "PNG") for i in range(6)})
+    window.open_paths([arc])
+    c = window.controller
+    qtbot.waitUntil(lambda: c.sizes[1] is not None, timeout=5000)
+    c.next()
+    window.selection.activate()
+    window.selection.set_rect(QRectF(10, 10, 100, 100))
+    qtbot.waitUntil(lambda: all(s is not None for s in c.sizes[:4]), timeout=5000)
+    qtbot.wait(300)
+    assert window.selection.rect() is not None
+
+
+def test_ribbon_keeps_scroll_when_a_later_size_arrives(window, qtbot, tmp_path):
+    s = tmp_path / "S"
+    make_zip(s / "w.cbz", {f"{i:03}.png": encode(page_image(i, (800, 1200)), "PNG") for i in range(6)})
+    window.open_paths([s / "w.cbz"])
+    c, view = window.controller, window.view
+    c.set_mode(Mode.RIBBON)
+    qtbot.waitUntil(lambda: all(x is not None for x in c.sizes), timeout=5000)
+    qtbot.wait(300)
+    view.scroll_to_page(2)
+    bar = view.verticalScrollBar()
+    bar.setValue(bar.value() + 37)
+    before = bar.value()
+    window.services.loader.size_known.emit(c.source_key, 5, 800, 2400)   # a page below gets taller
+    qtbot.waitUntil(lambda: c.sizes[5] == (800, 2400), timeout=2000)
+    qtbot.wait(400)
+    assert abs(bar.value() - before) <= 2
+
+
+def test_inside_drive_root():
+    from mangareader.ui.reader.controller import _inside
+    root = Path(Path.cwd().anchor)
+    assert _inside(root / "manga" / "a.cbz", root) and not _inside(root, root)
+
+
+def test_opened_file_missing_from_tree_keeps_its_own_list(window, qtbot, tmp_path):
+    from helpers import make_epub
+    books = tmp_path / "Books"
+    make_epub(books / "a.epub", 20)
+    make_epub(books / "b.epub", 20)
+    (books / "notes.txt").write_text("заметки\n" * 50, encoding="utf-8")
+    window.open_paths([books / "notes.txt"])
+    qtbot.wait(1500)                                   # the series scan finishes (it skips .txt)
+    window.sidebar.position_selected.emit(1, 0)        # must not index past the controller's list
+    assert window.controller.entry.path.name == "notes.txt"
+    assert [n.title for n in window.controller.display_tree().nodes] == ["notes"]

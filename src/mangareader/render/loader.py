@@ -62,6 +62,7 @@ class PageLoader(QObject):
     def register(self, key: str, source: PageSource, fingerprint: str) -> None:
         with self._lock:
             self._sources[key] = (source, fingerprint)
+            self._errors = {k: v for k, v in self._errors.items() if k[0] != key}
 
     def unregister(self, key: str) -> None:
         with self._lock:
@@ -116,6 +117,8 @@ class PageLoader(QObject):
                 self.size_known.emit(key, page, decoded.image.width, decoded.image.height)
                 self.full_ready.emit(key, page)
             return decoded
+        if self._source(key) is not entry:  # the source was closed or replaced meanwhile
+            return None
         with self._lock:
             self._errors[(key, page)] = message
         self.failed.emit(key, page, message)
@@ -133,14 +136,18 @@ class PageLoader(QObject):
             if self._cache.get(("full", key, page)) is None:
                 self._schedule(("full", key, page), lambda p=page: self._ensure_full(key, p), PRIORITY_PREFETCH)
 
-    def scaled(self, key: str, page: int, w: int, h: int) -> QImage | None:
+    def scaled(self, key: str, page: int, w: int, h: int, priority: int = PRIORITY_VISIBLE) -> QImage | None:
         cache_key = ("scaled", key, page, w, h)
         cached = self._cache.get(cache_key)
         if cached is None:
-            self._schedule(cache_key, lambda: self._make_scaled(key, page, w, h), PRIORITY_VISIBLE)
+            self._schedule(cache_key, lambda: self._make_scaled(key, page, w, h), priority)
         return cached
 
+    def has_scaled(self, key: str, page: int, w: int, h: int) -> bool:
+        return self._cache.get(("scaled", key, page, w, h)) is not None
+
     def _make_scaled(self, key: str, page: int, w: int, h: int) -> None:
+        entry = self._source(key)
         decoded = self._ensure_full(key, page)
         if decoded is None or w <= 0 or h <= 0:
             return
@@ -149,7 +156,7 @@ class PageLoader(QObject):
             img = resize_lanczos(img, w, h)
         q = pil_to_qimage(img)
         cache_key = ("scaled", key, page, w, h)
-        if self._source(key) is None:
+        if entry is None or self._source(key) is not entry:
             return
         self._cache.discard_where(lambda k: isinstance(k, tuple) and k[:3] == ("scaled", key, page) and k != cache_key)
         self._cache.put(cache_key, q, image_nbytes(q))

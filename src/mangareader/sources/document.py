@@ -23,27 +23,36 @@ _EXT = {"jpeg": ".jpg", "jpg": ".jpg", "png": ".png", "jpx": ".jp2", "bmp": ".bm
 _BROKEN = "Документ повреждён или не поддерживается"
 _CHAPTER_SPAN = 1_000_000
 
+# MuPDF is not thread-safe across documents either, so every document shares one lock
+MUPDF_LOCK = threading.RLock()
+
 
 class DocumentSource(PageSource):
     kind = "document"
 
     def __init__(self, path: Path, password: str | None = None, filetype: str | None = None):
         super().__init__(path)
-        self._lock = threading.RLock()
-        try:
-            self._doc = pymupdf.open(str(self.path), filetype=filetype)
-        except Exception as e:
-            raise SourceError(_BROKEN) from e
-        if self._doc.needs_pass and not self._doc.authenticate(password or ""):
-            self._doc.close()
-            raise PasswordRequired(wrong=bool(password))
-        self.is_reflowable = bool(self._doc.is_reflowable)
-        self.file_size = self.path.stat().st_size
+        self._lock = MUPDF_LOCK
+        with self._lock:
+            try:
+                self._doc = pymupdf.open(str(self.path), filetype=filetype)
+            except Exception as e:
+                raise SourceError(_BROKEN) from e
+            if self._doc.needs_pass and not self._doc.authenticate(password or ""):
+                self._doc.close()
+                raise PasswordRequired(wrong=bool(password))
         self._xrefs: dict[int, int | None] = {}
-        if self.is_reflowable:
-            self.relayout(*DEFAULT_REFLOW)
-        else:
-            self._rebuild_pages()
+        with self._lock:
+            try:
+                self.is_reflowable = bool(self._doc.is_reflowable)
+                self.file_size = self.path.stat().st_size
+                if self.is_reflowable:
+                    self.relayout(*DEFAULT_REFLOW)
+                else:
+                    self._rebuild_pages()
+            except Exception as e:  # MuPDF parses lazily: a broken FB2/EPUB fails here, not in open()
+                self._doc.close()
+                raise SourceError(_BROKEN) from e
         if not self.pages:
             self._doc.close()
             raise SourceError(_BROKEN)
@@ -56,8 +65,11 @@ class DocumentSource(PageSource):
         if not self.is_reflowable:
             return
         with self._lock:
-            self._doc.layout(width=width_px * 0.75, height=height_px * 0.75, fontsize=font_size)
-            self._rebuild_pages()
+            try:
+                self._doc.layout(width=width_px * 0.75, height=height_px * 0.75, fontsize=font_size)
+                self._rebuild_pages()
+            except Exception as e:
+                raise SourceError(_BROKEN) from e
 
     def _dpi(self) -> int:
         return REFLOW_DPI if self.is_reflowable else FIXED_DPI

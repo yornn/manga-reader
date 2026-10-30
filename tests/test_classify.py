@@ -42,7 +42,8 @@ def test_name_kind(name, kind):
 @pytest.mark.parametrize("name,kind,num", [
     ("Berserk v03 (2003) [Group]", Kind.VOLUME, "3"), ("Ch.021.5", Kind.CHAPTER, "21.5"),
     ("Vol.03 Ch.021", Kind.CHAPTER, "21"), ("Vol.03 Ch.021", Kind.VOLUME, "3"), ("第12話", None, "12"),
-    ("Глава 007", None, "7"), ("Extra", None, None), ("0", None, "0")])
+    ("Глава 007", None, "7"), ("Extra", None, None), ("0", None, "0"),
+    ("Kaiju No. 8 - 012", Kind.CHAPTER, "12"), ("Kaiju No. 8 - 012", None, "12"), ("Berserk 03 (2003)", None, "3")])
 def test_extract_number(name, kind, num):
     assert extract_number(name, kind) == num
 
@@ -117,3 +118,15 @@ def test_find_series_root(tmp_path):
     assert find_series_root(tmp_path / "Berserk/Berserk v02.cbz") == tmp_path / "Berserk"
     assert find_series_root(tmp_path / "S/01/ch01.cbz") == tmp_path / "S"
     assert find_series_root(tmp_path / "T/01/x.cbz") == tmp_path / "T/01"
+
+
+def test_unexpected_probe_error_does_not_sink_scan(tmp_path):
+    touch(tmp_path, ["c001.cbz", "c002.cbz"])
+
+    def probe(path):
+        if path.name == "c001.cbz":
+            raise RuntimeError("code=8: opening and closing tag mismatch")
+        return SourceInfo(10, (), None, (), None)
+    tree = classify_series(tmp_path, probe)
+    assert [e.path.name for e in tree.reading_order()] == ["c002.cbz"]
+    assert tree.failed[0][0].name == "c001.cbz" and tree.failed[0][1]

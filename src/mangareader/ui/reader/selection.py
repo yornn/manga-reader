@@ -1,6 +1,8 @@
 """The snipping tool: a resizable selection rectangle over the shown pages."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsRectItem
@@ -23,8 +25,13 @@ def pages_union(placed: list[Placed]) -> QRectF:
 
 
 def render_selection(source: PageSource, placed: list[Placed], rect: QRectF):
-    crops = crops_for_selection(placed, (rect.x(), rect.y(), rect.width(), rect.height()))
-    pages: dict[int, PageImage] = {c.page: load_page_image(source, c.page) for c in crops}
+    sel = (rect.x(), rect.y(), rect.width(), rect.height())
+    pages: dict[int, PageImage] = {c.page: load_page_image(source, c.page)
+                                   for c in crops_for_selection(placed, sel)}
+    # the layout may still use a guessed size for a page; map through the real one
+    placed = [replace(p, orig_w=pages[p.page].decoded.image.width, orig_h=pages[p.page].decoded.image.height)
+              if p.page in pages else p for p in placed]
+    crops = crops_for_selection(placed, sel)
     image = stitch(placed, crops, {page: pi.decoded.image for page, pi in pages.items()})
     return image, [pages[c.page] for c in crops]
 

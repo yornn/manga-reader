@@ -5,7 +5,7 @@ def test_selftest_passes(tmp_path, qapp):
     report = tmp_path / "selftest.log"
     assert selftest.run(report) == 0
     text = report.read_text(encoding="utf-8")
-    for step in ("zip", "7z", "pdf", "avif", "jxl", "export", "window"):
+    for step in ("zip", "7z", "rar", "pdf", "avif", "jxl", "export", "window"):
         assert f"OK {step}" in text
 
 

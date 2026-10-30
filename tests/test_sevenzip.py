@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import shutil
 import time
 
@@ -39,7 +40,8 @@ def test_extract_solid_rar(tmp_path):
 
 
 def test_extract_wrong_password(tmp_path):
-    ex = SevenZip(find_7zz()).start_extract(RAR_DIR / "rar5-psw.rar", tmp_path / "x", "nope")
+    sizes = {"stest1.txt": 2048, "stest2.txt": 2048}      # listing would already reject the password
+    ex = SevenZip(find_7zz()).start_extract(RAR_DIR / "rar5-psw.rar", tmp_path / "x", "nope", sizes)
     assert not ex.wait_file("stest1.txt", 30) and ex.error == "wrong_password"
 
 
@@ -93,3 +95,68 @@ def test_no_7zz(tmp_path):
     shutil.copy(RAR_DIR / "rar5-solid.rar", tmp_path / "a.cbr")
     with pytest.raises(SourceError, match="7-Zip"):
         open_source(tmp_path / "a.cbr", SourceContext(tmp_path / "e", None))
+
+
+def test_read_after_close_does_not_restart_extraction(tmp_path, ctx):
+    arc = make_7z(tmp_path / "a.cb7", {"1.png": encode(page_image(1), "PNG")})
+    src = open_source(arc, ctx)
+    src.read_original(0)
+    src.close()
+    with pytest.raises(SourceError):
+        src.read_original(0)
+    assert src.page_size(0) is None
+    assert not any(ctx.extract_root.iterdir())
+
+
+def test_second_instance_keeps_running_extraction(tmp_path):
+    from mangareader.sources.sevenzip import claim_extract_dir, release_extract_dir
+    root = tmp_path / "extract"
+    first = claim_extract_dir(root)
+    (first.path / "x").mkdir()
+    (first.path / "x" / "f").write_bytes(b"1")
+    (root / "leftover").mkdir()                      # left by a crashed run, nobody holds it
+    second = claim_extract_dir(root)                 # another program start cleans only stale folders
+    assert (first.path / "x" / "f").exists() and not (root / "leftover").exists()
+    assert first.path != second.path
+    release_extract_dir(first)
+    assert not first.path.exists() and second.path.exists()
+    release_extract_dir(second)
+
+
+def test_services_use_own_extract_folder(tmp_path):
+    from mangareader.paths import resolve_data_location
+    from mangareader.ui.reader.controller import make_services
+    data = resolve_data_location()
+    a, b = make_services(data), make_services(data)
+    assert a.ctx.extract_root.parent == data.extract and a.ctx.extract_root != b.ctx.extract_root
+    assert a.ctx.extract_root.exists()
+
+
+def test_resolve_names_renamed_by_7zip_on_windows(tmp_path):
+    from mangareader.sources.sevenzip import resolve_extracted
+    for rel in ("Ch 1_ Start/001.png", "Wait.._/x.png", "_CON/y.png"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(b"1")
+    assert resolve_extracted(tmp_path, "Ch 1: Start/001.png") == tmp_path / "Ch 1_ Start" / "001.png"
+    assert resolve_extracted(tmp_path, "Wait.../x.png") == tmp_path / "Wait.._" / "x.png"
+    assert resolve_extracted(tmp_path, "CON/y.png") == tmp_path / "_CON" / "y.png"
+    assert resolve_extracted(tmp_path, "missing.png") is None
+
+
+def test_archive_with_windows_unsafe_names(tmp_path, ctx):   # renamed on Windows, kept on Linux
+    shutil.copy(Path(__file__).parent / "fixtures" / "odd-names.7z", tmp_path / "odd.cb7")
+    src = open_source(tmp_path / "odd.cb7", ctx)
+    assert len(src.pages) == 4
+    assert all(src.load_image(i).image.size == (40, 60) for i in range(4))
+
+
+def test_wrong_password_rejected_when_only_data_is_encrypted(tmp_path, ctx):
+    z = SevenZip(find_7zz())
+    with pytest.raises(PasswordRequired) as e:
+        z.list(RAR_DIR / "rar5-psw.rar", "wrong")
+    assert e.value.wrong
+    assert len(z.list(RAR_DIR / "rar5-psw.rar", "password")) == 2
+    arc = make_7z(tmp_path / "e.cbz", {"1.jpg": encode(page_image(1), "JPEG")}, password="pw", fmt="zip")
+    with pytest.raises(PasswordRequired) as e2:
+        open_source(arc, ctx, password="WRONG")
+    assert e2.value.wrong

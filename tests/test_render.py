@@ -3,6 +3,7 @@ from mangareader.render.cache import ImageCache, image_nbytes
 from mangareader.render.loader import PageLoader, pil_to_qimage
 from mangareader.render.thumbs import ThumbnailStore
 from mangareader.sources import open_source
+from mangareader.sources.base import SourceError
 
 
 def test_cache_lru_budget():
@@ -86,3 +87,51 @@ def test_probe_sizes_and_unregister(qtbot, tmp_path, ctx):
         ld.full("k", 0)
     ld.unregister("k")
     assert cache.used_bytes == 0
+
+
+def _blocking(src, gate, fail, entered):
+    real = src.load_image
+
+    def load(i, draft=None):
+        entered.set()
+        gate.wait(5)
+        if fail:
+            raise SourceError("Не удалось прочитать страницу")
+        return real(i, draft)
+    src.load_image = load
+    return src
+
+
+def test_failure_after_unregister_is_forgotten(qtbot, tmp_path, ctx):
+    import threading
+    from PySide6.QtCore import QThreadPool
+    data = {"1.png": encode(page_image(1, (100, 150)), "PNG")}
+    gate, entered = threading.Event(), threading.Event()
+    old = _blocking(open_source(make_zip(tmp_path / "a.cbz", data), ctx), gate, fail=True, entered=entered)
+    ld = PageLoader(ImageCache(2**26), ThumbnailStore(tmp_path / "th"))
+    ld.register("k", old, "fp")
+    ld.full("k", 0)
+    assert entered.wait(5)
+    ld.unregister("k")
+    ld.register("k", open_source(tmp_path / "a.cbz", ctx), "fp")
+    gate.set()
+    QThreadPool.globalInstance().waitForDone(5000)
+    qtbot.wait(50)
+    assert ld.error("k", 0) is None
+
+
+def test_stale_scaled_copy_is_not_cached(qtbot, tmp_path, ctx):
+    import threading
+    from PySide6.QtCore import QThreadPool
+    gate, entered = threading.Event(), threading.Event()
+    old = _blocking(open_source(make_zip(tmp_path / "a.cbz", {"1.png": encode(page_image(1, (100, 150)), "PNG")}),
+                                ctx), gate, fail=False, entered=entered)
+    ld = PageLoader(ImageCache(2**26), ThumbnailStore(tmp_path / "th"))
+    ld.register("k", old, "fp")
+    ld.scaled("k", 0, 50, 75)
+    assert entered.wait(5)
+    ld.register("k", open_source(make_zip(tmp_path / "b.cbz", {"1.png": encode(page_image(2, (100, 150)), "PNG")}),
+                                 ctx), "fp2")
+    gate.set()
+    QThreadPool.globalInstance().waitForDone(5000)
+    assert not ld.has_scaled("k", 0, 50, 75)

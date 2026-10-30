@@ -103,3 +103,10 @@ def test_pdf_from_webp_page_is_lossless_png():
     p = pi("WEBP", lossless=True)
     doc = pymupdf.open(stream=encode_page(p, EncodeOptions(OutFormat.PDF)).data)
     assert doc.extract_image(doc[0].get_images()[0][0])["ext"] == "png"
+
+
+def test_webp_size_limit_is_export_error():
+    from mangareader.export.writer import ExportError
+    tall = PageImage(decode(encode(Image.new("L", (100, 17000), 128), "PNG")), None)
+    with pytest.raises(ExportError, match="WEBP"):
+        encode_page(tall, EncodeOptions(OutFormat.WEBP, 80))
