@@ -119,3 +119,16 @@ def test_empty_library_hint(qtbot, services):
     assert p.empty_hint.isVisibleTo(p) and p.model.rowCount() == 1
     with qtbot.waitSignal(p.settings_requested):
         p.empty_hint.findChild(QPushButton).click()
+
+
+def test_continue_row_replaces_cards_and_fits_narrow_window(qtbot, services):
+    from helpers import card
+    from mangareader.ui.library.continue_row import ContinueCard, ContinueRow
+    row = ContinueRow(services.covers)
+    qtbot.addWidget(row)
+    cards = [card(id=i, title=f"Серия {i}", opened=1, pages_total=10, pages_read=1, last_opened_at=1.0)
+             for i in range(5)]
+    for _ in range(3):
+        row.set_cards(cards)
+    assert len([w for w in row.findChildren(ContinueCard) if w.isVisibleTo(row)]) == 5
+    assert row.minimumSizeHint().width() < 600            # five cards scroll instead of widening the window

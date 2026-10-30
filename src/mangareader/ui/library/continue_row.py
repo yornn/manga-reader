@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from mangareader.library.catalog import SeriesCard, continue_caption, when_text
 from mangareader.render.covers import CoverLoader
@@ -66,22 +66,38 @@ class ContinueRow(QWidget):
         super().__init__(parent)
         self._covers = covers
         self._cards: list[ContinueCard] = []
-        self._layout = QHBoxLayout(self)
+        inner = QWidget()
+        self._layout = QHBoxLayout(inner)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.addStretch(1)
+        # the row scrolls sideways, so five cards never make the window wider than the screen
+        self._scroll = QScrollArea()
+        self._scroll.setWidget(inner)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._scroll)
         covers.cover_ready.connect(self._on_cover)
 
     def set_cards(self, cards: Sequence[SeriesCard], now: float | None = None) -> None:
         now = time.time() if now is None else now
         for widget in self._cards:
+            self._layout.removeWidget(widget)
+            widget.hide()
             widget.deleteLater()
         self._cards = []
         for n, card in enumerate(cards):
-            widget = ContinueCard(card, now, self)
+            widget = ContinueCard(card, now)
             widget.clicked.connect(self.open_series)
             widget.set_cover(self._covers.cover(card.cover_source_id))
             self._layout.insertWidget(n, widget)
+            widget.show()
             self._cards.append(widget)
+        bar = self._scroll.horizontalScrollBar().sizeHint().height()
+        height = max((w.sizeHint().height() for w in self._cards), default=0)
+        self._scroll.setFixedHeight(height + bar + 2)
 
     def cards(self) -> list[ContinueCard]:
         return list(self._cards)
