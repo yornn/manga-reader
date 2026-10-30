@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QPoint, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
@@ -13,6 +13,7 @@ from mangareader.ui.reader.layout import Direction
 
 CLICK_SLOP = 5
 WHEEL_STEP = 120
+SMOOTH_MS = 160          # one wheel notch glides for this long
 
 
 class ZoomMode(StrEnum):
@@ -105,7 +106,12 @@ class PageView(QGraphicsView):
         self._zoom_mode = ZoomMode.FIT_WINDOW
         self._custom_scale = 1.0
         self._press: QPoint | None = None
-        self._wheel_acc = 0
+        self._horizontal = False
+        self._scroll_target: QPointF | None = None
+        self._scroll_anim = QVariantAnimation(self)
+        self._scroll_anim.setDuration(SMOOTH_MS)
+        self._scroll_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._scroll_anim.valueChanged.connect(self._on_scroll_step)
         self._visible_page: int | None = None
         self.selection_mode = False
         self._refresh = QTimer(self)
@@ -120,6 +126,7 @@ class PageView(QGraphicsView):
     # -- content ------------------------------------------------------------------
     def show_pages(self, key: str, placed: list[Placed], direction: Direction, ribbon: bool = False,
                    focus_page: int | None = None, anchor: tuple[int, float] | None = None) -> None:
+        self._scroll_anim.stop()                    # a glide must not carry over to the next page
         self.scene().clear()
         self._key, self._placed, self._direction, self._ribbon = key, list(placed), direction, ribbon
         self._items = {}
@@ -296,26 +303,49 @@ class PageView(QGraphicsView):
             self._apply_zoom()
         self.resized.emit()
 
+    def _along_ribbon(self, dx: float, dy: float) -> tuple[float, float]:
+        # in the horizontal ribbon the wheel moves along the reading direction
+        if not self._horizontal:
+            return dx, dy
+        return dx + (dy if self._direction is Direction.LTR else -dy), 0.0
+
+    def smooth_scroll(self, dx: float, dy: float) -> None:
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        start = QPointF(h.value(), v.value())
+        running = self._scroll_anim.state() == QVariantAnimation.Running
+        base = self._scroll_target if running and self._scroll_target is not None else start
+        target = QPointF(min(max(base.x() + dx, h.minimum()), h.maximum()),
+                         min(max(base.y() + dy, v.minimum()), v.maximum()))
+        if target == start:
+            return
+        self._scroll_target = target
+        self._scroll_anim.stop()
+        self._scroll_anim.setStartValue(start)
+        self._scroll_anim.setEndValue(target)
+        self._scroll_anim.start()
+
+    def _on_scroll_step(self, value: QPointF) -> None:
+        self.horizontalScrollBar().setValue(round(value.x()))
+        self.verticalScrollBar().setValue(round(value.y()))
+
     def wheelEvent(self, event) -> None:
+        # the wheel only scrolls (spec 2.1); pages turn with the keys and the side clicks
         dy = event.angleDelta().y()
         if event.modifiers() & Qt.ControlModifier:
             self.zoom_by(1.25 ** (dy / WHEEL_STEP))
+            event.accept()
             return
-        if self._ribbon:
-            super().wheelEvent(event)
+        event.accept()
+        pixels = event.pixelDelta()
+        if not pixels.isNull():                       # a touchpad already scrolls smoothly
+            self._scroll_anim.stop()
+            dx, dy = self._along_ribbon(-pixels.x(), -pixels.y())
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + round(dx))
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + round(dy))
             return
-        bar = self.verticalScrollBar()
-        at_edge = bar.maximum() == bar.minimum() or (dy < 0 and bar.value() >= bar.maximum()) or (
-            dy > 0 and bar.value() <= bar.minimum())
-        if not at_edge:
-            self._wheel_acc = 0
-            super().wheelEvent(event)
-            return
-        self._wheel_acc += dy
-        if abs(self._wheel_acc) >= WHEEL_STEP:
-            forward = self._wheel_acc < 0
-            self._wheel_acc = 0
-            self.flip_requested.emit(forward)
+        step = max(80.0, self.viewport().height() * 0.2)
+        dx, dy = self._along_ribbon(-event.angleDelta().x() / WHEEL_STEP * step, -dy / WHEEL_STEP * step)
+        self.smooth_scroll(dx, dy)
 
     def set_selection_mode(self, on: bool) -> None:
         self.selection_mode = on

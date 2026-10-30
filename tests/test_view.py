@@ -83,22 +83,41 @@ def test_middle_click_does_not_flip(view, qtbot):
         qtbot.mouseClick(view.viewport(), Qt.LeftButton, pos=QPoint(view.viewport().width() // 2, 300))
 
 
-def test_wheel_flips_when_page_fits(view, qtbot):
+def test_wheel_never_flips(view, qtbot):
     view.show_pages("k", place_group([0], SIZE, Direction.LTR), Direction.LTR)
-    view.set_zoom_mode(ZoomMode.FIT_WINDOW)
-    with qtbot.waitSignal(view.flip_requested) as sig:
+    view.set_zoom_mode(ZoomMode.FIT_WINDOW)                 # nothing to scroll: the wheel does nothing
+    with qtbot.assertNotEmitted(view.flip_requested, wait=300):
         send_wheel(view, -120)
-    assert sig.args == [True]
+    view.set_zoom_mode(ZoomMode.FIT_WIDTH)
+    bar = view.verticalScrollBar()
+    bar.setValue(bar.maximum())                             # at the end of a tall page
+    with qtbot.assertNotEmitted(view.flip_requested, wait=300):
+        for _ in range(3):
+            send_wheel(view, -120)
+    assert bar.value() == bar.maximum()
 
 
-def test_wheel_scrolls_when_page_is_taller(view, qtbot):
+def test_wheel_scrolls_smoothly(view, qtbot):
     view.show_pages("k", place_group([0], SIZE, Direction.LTR), Direction.LTR)
     view.set_zoom_mode(ZoomMode.FIT_WIDTH)
     bar = view.verticalScrollBar()
     assert bar.value() == bar.minimum()
-    with qtbot.assertNotEmitted(view.flip_requested):
-        send_wheel(view, -120)
-    assert bar.value() > bar.minimum()
+    send_wheel(view, -120)
+    assert bar.value() < bar.minimum() + 40                 # it glides, not jumps
+    qtbot.waitUntil(lambda: bar.value() >= bar.minimum() + 80, timeout=1000)
+    send_wheel(view, 120)
+    qtbot.waitUntil(lambda: bar.value() == bar.minimum(), timeout=1000)
+
+
+def test_touchpad_scrolls_at_once(view):
+    view.show_pages("k", place_group([0], SIZE, Direction.LTR), Direction.LTR)
+    view.set_zoom_mode(ZoomMode.FIT_WIDTH)
+    bar = view.verticalScrollBar()
+    vp = view.viewport()
+    center = QPointF(vp.width() / 2, vp.height() / 2)
+    QApplication.sendEvent(vp, QWheelEvent(center, vp.mapToGlobal(center), QPoint(0, -50), QPoint(0, -60),
+                                           Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False))
+    assert bar.value() == bar.minimum() + 50
 
 
 def test_scaled_image_requested_at_device_size(view, qtbot):
