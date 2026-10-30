@@ -5,7 +5,7 @@ import time
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPalette, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from mangareader.library.catalog import SeriesCard, continue_caption, when_text
@@ -34,8 +34,7 @@ class ContinueCard(QFrame):
         self.title_label.setFont(font)
         self.where_label = QLabel(continue_caption(card))
         self.when_label = QLabel(when_text(card.last_opened_at or now, now))
-        muted = f"color: {style.muted_color().name()};"
-        self.when_label.setStyleSheet(muted)
+        self.when_label.setForegroundRole(QPalette.PlaceholderText)
         text = QVBoxLayout()
         text.setSpacing(2)
         for label in (self.title_label, self.where_label, self.when_label):

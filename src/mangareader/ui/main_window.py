@@ -216,6 +216,7 @@ class MainWindow(QMainWindow):
         page.settings_requested.connect(self.show_settings)
         page.refresh_requested.connect(scanner.start)
         self.settings_page.roots_changed.connect(self._on_roots_changed)
+        self.settings_page.theme_changed.connect(self._on_theme_changed)
         self.settings_page.rescan_requested.connect(scanner.start)
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
@@ -379,6 +380,10 @@ class MainWindow(QMainWindow):
             self.go_home()
         self.settings_page.refresh(self.scanner.failed)
         self.library_page.show_settings()
+
+    def _on_theme_changed(self) -> None:
+        style.refresh_surfaces(self)
+        self.library_page.reload()                    # shelf icons and covers' captions pick up the new colours
 
     def _on_roots_changed(self) -> None:
         self.library_page.reload()

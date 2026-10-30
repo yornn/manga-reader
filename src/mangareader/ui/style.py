@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 NAV_WIDTH = 220
 TILE_COVER = QSize(150, 213)
@@ -39,3 +39,39 @@ def muted_color() -> QColor:
 
 def accent_color() -> QColor:
     return _palette_color(QPalette.Highlight)
+
+
+# -- surfaces: the navigation columns sit on the window colour, everything else on the base colour ----------
+SURFACE = "surface"
+PANEL = "panel"
+CONTENT = "content"
+
+
+def panel_color() -> QColor:
+    return _palette_color(QPalette.Window)
+
+
+def content_color() -> QColor:
+    return _palette_color(QPalette.Base)
+
+
+def _paint_surface(widget: QWidget, kind: str) -> None:
+    color = panel_color() if kind == PANEL else content_color()
+    palette = QPalette()                      # only these two roles: text colours keep following the theme
+    palette.setColor(QPalette.Window, color)
+    palette.setColor(QPalette.Base, color)
+    widget.setPalette(palette)
+    widget.setAutoFillBackground(True)
+
+
+def set_surface(widget: QWidget, kind: str) -> None:
+    widget.setProperty(SURFACE, kind)
+    _paint_surface(widget, kind)
+
+
+def refresh_surfaces(root: QWidget) -> None:
+    """Repaint every surface after a theme switch."""
+    for widget in [root, *root.findChildren(QWidget)]:
+        kind = widget.property(SURFACE)
+        if kind:
+            _paint_surface(widget, kind)

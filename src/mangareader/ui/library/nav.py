@@ -5,8 +5,8 @@ from collections.abc import Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QMenu, QPushButton, QTreeWidget, QTreeWidgetItem, \
-    QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHeaderView, QMenu, QPushButton, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from mangareader.library.catalog import Section, SectionKind, SeriesCard, Shelf, format_counts
 from mangareader.ui import icons, style
@@ -79,14 +79,17 @@ class LibraryNav(QWidget):
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.customContextMenuRequested.connect(self._on_menu)
         self.tree.series_dropped.connect(self.series_dropped)
+        self.tree.setFrameShape(QFrame.NoFrame)
         self.settings_button = QPushButton(self.tr("⚙ Настройки"))
         self.settings_button.setFlat(True)
+        self.settings_button.setCheckable(True)
         self.settings_button.clicked.connect(self.settings_requested)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree, 1)
         layout.addWidget(self.settings_button)
         self.setFixedWidth(style.NAV_WIDTH)
+        style.set_surface(self, style.PANEL)
 
     # -- content ----------------------------------------------------------------------------------------
     def _item(self, text: str, count: int | None, section: Section | None = None,
@@ -131,7 +134,10 @@ class LibraryNav(QWidget):
         if item is None:
             self._section = Section()
             item = self.item_for(self._section)
-        self.tree.setCurrentItem(item)
+        if self.settings_button.isChecked():
+            self.tree.setCurrentItem(None)
+        else:
+            self.tree.setCurrentItem(item)
 
     def _label_formats(self, item: QTreeWidgetItem) -> None:
         item.setText(0, ("▾ " if item.isExpanded() else "▸ ") + self.tr("Форматы"))
@@ -149,7 +155,16 @@ class LibraryNav(QWidget):
     def section(self) -> Section:
         return self._section
 
+    def set_settings_active(self, on: bool) -> None:
+        """While the settings page is open, its button is marked and no section is."""
+        self.settings_button.setChecked(on)
+        if on:
+            self.tree.setCurrentItem(None)
+        else:
+            self.tree.setCurrentItem(self.item_for(self._section))
+
     def select(self, section: Section) -> None:
+        self.settings_button.setChecked(False)
         item = self.item_for(section) or self.item_for(Section())
         self._section = item.data(0, SECTION_ROLE)
         self.tree.setCurrentItem(item)
@@ -166,6 +181,7 @@ class LibraryNav(QWidget):
             self._label_formats(item)
         elif item.data(0, SECTION_ROLE) is not None:
             self._section = item.data(0, SECTION_ROLE)
+            self.set_settings_active(False)
             self.section_selected.emit(self._section)
 
     def shelf_menu(self, shelf_id: int) -> QMenu:

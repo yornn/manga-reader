@@ -26,6 +26,7 @@ def choose_folder(parent: QWidget | None, title: str) -> str:
 
 
 class SettingsPage(QWidget):
+    theme_changed = Signal()
     roots_changed = Signal()
     rescan_requested = Signal()
 
@@ -110,6 +111,7 @@ class SettingsPage(QWidget):
         column.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
         scroll.setWidget(body)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -195,6 +197,7 @@ class SettingsPage(QWidget):
         self.services.settings.theme = self.theme_combo.currentData()
         apply_theme(QApplication.instance(), self.services.settings.theme)
         self._save()
+        self.theme_changed.emit()
 
     def _choose_save_folder(self) -> None:
         folder = choose_folder(self, self.tr("Папка для сохранения"))

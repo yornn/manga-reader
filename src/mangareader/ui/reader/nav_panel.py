@@ -143,9 +143,11 @@ class NavPanel(QWidget):
         self.tree.itemExpanded.connect(self._on_expanded)
         self.tree.page_clicked.connect(lambda page: self.position_selected.emit(self._entry_index, page))
         self.tree.customContextMenuRequested.connect(self._on_menu)
+        self.tree.setFrameShape(QTreeWidget.NoFrame)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
+        style.set_surface(self, style.PANEL)
         loader.thumb_ready.connect(self._on_thumb)
         covers.cover_ready.connect(self._on_cover)
 

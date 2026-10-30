@@ -161,3 +161,29 @@ def test_recent_files_join_the_library_once(make_window, qtbot, tmp_path):
     w = make_window(qtbot)
     assert [c.title for c in w.services.catalog.cards()] == ["Old"] and w.services.settings.recent_imported
     assert [w.library_page.model.card_at(1).title] == ["Old"]
+
+
+def test_settings_highlights_settings_button(window):
+    window.show_settings()
+    nav = window.library_page.nav
+    assert nav.settings_button.isChecked() and nav.tree.selectedItems() == []
+    nav.tree.itemClicked.emit(nav.item_for(Section()), 0)
+    assert not nav.settings_button.isChecked() and nav.tree.currentItem() is nav.item_for(Section())
+
+
+def test_theme_switch_recolors_columns(window):
+    from PySide6.QtGui import QPalette
+
+    def lightness():
+        page = window.library_page
+        return (page.nav.palette().color(QPalette.Window).lightness(),
+                page.content.palette().color(QPalette.Window).lightness(),
+                window.nav_panel.palette().color(QPalette.Base).lightness())
+    combo = window.settings_page.theme_combo
+    combo.setCurrentIndex(combo.findData("light"))
+    nav, content, reader_nav = lightness()
+    assert nav < content                      # light theme: a grey column next to white
+    combo.setCurrentIndex(combo.findData("dark"))
+    nav, content, reader_nav = lightness()
+    assert nav > content and reader_nav == nav    # dark theme: the navigation columns are the lighter ones
+    combo.setCurrentIndex(combo.findData("light"))

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, Qt, QUrl, Signal
-from PySide6.QtGui import QCursor, QDesktopServices
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QHBoxLayout, QLabel, QLineEdit, QMenu,
-                               QPushButton, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QModelIndex, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QCursor, QDesktopServices, QPalette
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
+                               QPushButton, QScrollArea, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from mangareader.library.catalog import (CatalogError, Section, SectionKind, SeriesCard, Sort, Status,
                                          continue_reading, filter_cards)
@@ -32,8 +32,33 @@ def _header(text: str) -> QLabel:
     font.setBold(True)
     font.setPointSizeF(font.pointSizeF() * 0.85)
     label.setFont(font)
-    label.setStyleSheet(f"color: {style.muted_color().name()};")
+    label.setForegroundRole(QPalette.PlaceholderText)      # muted, and it follows a theme switch
     return label
+
+
+class _SideScroll(QScrollArea):
+    """Holds the top bar: when the window is narrow the bar scrolls sideways instead of widening the window."""
+
+    def __init__(self, inner: QWidget):
+        super().__init__()
+        self.setWidget(inner)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._fit()
+
+    def _fit(self) -> None:
+        inner = self.widget()
+        need_bar = inner.minimumSizeHint().width() > self.viewport().width()
+        bar = self.horizontalScrollBar().sizeHint().height() if need_bar else 0
+        self.setFixedHeight(inner.sizeHint().height() + bar)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(80, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit()
 
 
 class LibraryPage(QWidget):
@@ -100,6 +125,7 @@ class LibraryPage(QWidget):
         self.grid.setModel(self.model)
         self.grid.setItemDelegate(TileDelegate(self.grid))
         self.grid.clicked.connect(self._on_tile_clicked)
+        self.grid.tile_activated.connect(self._on_tile_clicked)
         self.grid.setContextMenuPolicy(Qt.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._on_tile_menu)
 
@@ -112,9 +138,12 @@ class LibraryPage(QWidget):
         settings_button.clicked.connect(self.settings_requested)
         hint.addWidget(settings_button)
 
+        top_box = QWidget()
+        top.setContentsMargins(0, 0, 0, 0)
+        top_box.setLayout(top)
         tiles = QWidget()
         column = QVBoxLayout(tiles)
-        column.addLayout(top)
+        column.addWidget(_SideScroll(top_box))
         column.addWidget(self.continue_header)
         column.addWidget(self.continue_row)
         column.addWidget(_header(self.tr("БИБЛИОТЕКА")))
@@ -122,6 +151,7 @@ class LibraryPage(QWidget):
         column.addWidget(self.grid, 1)
         self.content = QStackedWidget()
         self.content.addWidget(tiles)
+        style.set_surface(self.content, style.CONTENT)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.nav)
@@ -152,6 +182,7 @@ class LibraryPage(QWidget):
 
     def show_tiles(self) -> None:
         self.content.setCurrentIndex(0)
+        self.nav.set_settings_active(False)
 
     def set_settings_page(self, widget: QWidget) -> None:
         self._settings = widget
@@ -160,6 +191,7 @@ class LibraryPage(QWidget):
     def show_settings(self) -> None:
         if self._settings is not None:
             self.content.setCurrentWidget(self._settings)
+            self.nav.set_settings_active(True)
 
     def set_scanning(self, on: bool) -> None:
         self.refresh_button.setEnabled(not on)

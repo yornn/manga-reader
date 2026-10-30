@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QAbstractListModel, QMimeData, QModelIndex, QRect, QSize, Qt
+from PySide6.QtCore import QAbstractListModel, QMimeData, QModelIndex, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QAbstractItemView, QListView, QStyle, QStyledItemDelegate
 
@@ -176,8 +176,11 @@ class TileDelegate(QStyledItemDelegate):
 
 
 class TileGrid(QListView):
+    tile_activated = Signal(QModelIndex)
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setFrameShape(QListView.NoFrame)
         self.setViewMode(QListView.IconMode)
         self.setMovement(QListView.Static)
         self.setFlow(QListView.LeftToRight)
@@ -190,3 +193,9 @@ class TileGrid(QListView):
         self.setDragDropMode(QAbstractItemView.DragOnly)
         self.setDefaultDropAction(Qt.CopyAction)
         self.setMouseTracking(True)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.currentIndex().isValid():
+            self.tile_activated.emit(self.currentIndex())
+            return
+        super().keyPressEvent(event)

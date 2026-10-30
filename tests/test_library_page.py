@@ -132,3 +132,12 @@ def test_continue_row_replaces_cards_and_fits_narrow_window(qtbot, services):
         row.set_cards(cards)
     assert len([w for w in row.findChildren(ContinueCard) if w.isVisibleTo(row)]) == 5
     assert row.minimumSizeHint().width() < 600            # five cards scroll instead of widening the window
+
+
+def test_enter_opens_tile(page, qtbot):
+    from PySide6.QtCore import Qt
+    page.grid.setFocus()
+    page.grid.setCurrentIndex(page.model.index(1))
+    with qtbot.waitSignal(page.open_series) as b:
+        qtbot.keyClick(page.grid, Qt.Key_Return)
+    assert b.args == [page.model.card_at(1).id]
