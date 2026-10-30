@@ -13,3 +13,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 @pytest.fixture(autouse=True)
 def _isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("MANGAREADER_DATA", str(tmp_path / "data"))
+
+
+@pytest.fixture
+def ctx(tmp_path):
+    from mangareader.paths import find_7zz
+    from mangareader.sources import SourceContext
+
+    return SourceContext(extract_root=tmp_path / "extract", seven_zip=find_7zz())
