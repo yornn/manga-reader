@@ -15,7 +15,7 @@ from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
 from mangareader.sources.detect import OPENABLE_EXTS
 from mangareader.library.classify import SeriesTree, suggest_chapter_number
-from mangareader.library.library_scan import record_tree, series_path_for
+from mangareader.library.library_scan import import_recent, record_tree, series_path_for
 from mangareader.library.store import path_key
 from mangareader.export import writer
 from mangareader.export.encoders import EncodeOptions, OutFormat, Resize, encode_fragment, encode_page
@@ -119,6 +119,14 @@ class MainWindow(QMainWindow):
         self._series_path: Path | None = None
         self._reader_actions: list[QAction] = []
         self.scanner = ScanRunner(services, self)
+        if not services.settings.recent_imported:
+            # files opened before the library existed become series once
+            import_recent(services.catalog, services.settings.recent)
+            services.settings.recent_imported = True
+            try:
+                save_settings(services.settings, services.data.settings_file)
+            except OSError:
+                pass
         self._build_ui()
         self._build_actions()
         self._build_library()

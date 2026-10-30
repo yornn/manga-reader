@@ -146,3 +146,15 @@ def test_same_series_in_other_case(cat, st, tmp_path):
     folder = tmp_path / "Берсерк"
     folder.mkdir()
     assert cat.ensure_series(folder) == cat.ensure_series(Path(str(folder).upper()))
+
+
+def test_relocate_rejects_nesting(cat, st, tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    (b / "sub").mkdir(parents=True)
+    a.mkdir()
+    rid = cat.add_root(a)
+    cat.add_root(b)
+    with pytest.raises(CatalogError, match="уже внутри папки библиотеки"):
+        cat.relocate_root(rid, b / "sub")
+    with pytest.raises(CatalogError, match="Внутри этой папки уже есть папка библиотеки"):
+        cat.relocate_root(rid, tmp_path)

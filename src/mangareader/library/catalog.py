@@ -112,16 +112,22 @@ class Catalog:
         rows = self.store.query("SELECT id, path, added_at FROM roots ORDER BY added_at, id")
         return [Root(rid, Path(path), added) for rid, path, added in rows]
 
-    def add_root(self, path: Path) -> int:
-        path = Path(os.path.abspath(path))
+    def _check_nesting(self, path: Path, except_id: int | None = None) -> None:
         key = path_key(path)
         for root in self.roots():
+            if root.id == except_id:
+                continue
             if path_key(root.path) == key:
                 raise CatalogError("Эта папка уже в библиотеке")
             if is_inside(path, root.path):
                 raise CatalogError(f"Эта папка уже внутри папки библиотеки «{root.path.name}»")
             if is_inside(root.path, path):
                 raise CatalogError(f"Внутри этой папки уже есть папка библиотеки «{root.path.name}»")
+
+    def add_root(self, path: Path) -> int:
+        path = Path(os.path.abspath(path))
+        key = path_key(path)
+        self._check_nesting(path)
         return self.store.execute("INSERT INTO roots(path, path_key, added_at) VALUES (?, ?, ?)",
                                   (str(path), key, self.store.now()))
 
@@ -134,8 +140,7 @@ class Catalog:
         if not row:
             return
         old = Path(row[0][0])
-        if any(r.id != root_id and path_key(r.path) == path_key(new) for r in self.roots()):
-            raise CatalogError("Эта папка уже в библиотеке")
+        self._check_nesting(new, except_id=root_id)
         old_key = path_key(old)
 
         def inside(key: str) -> bool:

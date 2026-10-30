@@ -75,3 +75,15 @@ def test_series_path_for(tmp_path):
     vol.mkdir(parents=True)
     make_zip(vol / "Глава 1.cbz", {"1.png": encode(page_image(1), "PNG")})
     assert series_path_for(vol, [root]) == (tmp_path / "Series", None)
+
+
+def test_import_recent_adds_series_once(tmp_path):
+    from mangareader.library.library_scan import import_recent
+    st = Store(tmp_path / "db")
+    cat = Catalog(st)
+    a = make_zip(tmp_path / "A" / "c1.cbz", {"1.png": encode(page_image(1), "PNG")})
+    b = make_zip(tmp_path / "B" / "c1.cbz", {"1.png": encode(page_image(1), "PNG")})
+    paths = [str(a), str(b), str(tmp_path / "gone.cbz")]
+    assert import_recent(cat, paths) == 2
+    assert sorted(c.title for c in cat.cards()) == ["A", "B"] and all(c.root_id is None for c in cat.cards())
+    assert import_recent(cat, paths) == 0

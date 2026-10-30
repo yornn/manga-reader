@@ -10,7 +10,7 @@ from pathlib import Path
 from mangareader.library.catalog import Catalog, Root, series_formats
 from mangareader.library.classify import SeriesTree, find_series_root, is_inside, is_visible, is_volume_folder
 from mangareader.library.scanner import scan_series
-from mangareader.library.store import Store
+from mangareader.library.store import Store, path_key
 from mangareader.sources import SourceContext
 from mangareader.sources.detect import SOURCE_EXTS
 from mangareader.sources.folder import has_direct_images
@@ -98,3 +98,21 @@ def series_path_for(path: Path, roots: Sequence[Root]) -> tuple[Path, int | None
     if path.is_dir() and not has_direct_images(path):
         return (path.parent if is_volume_folder(path) else path), None
     return find_series_root(path), None
+
+
+def import_recent(catalog: Catalog, paths: Sequence[str]) -> int:
+    """Add the series of files opened before the library existed; returns how many were new."""
+    roots = catalog.roots()
+    root_keys = {path_key(r.path) for r in roots}
+    known = {path_key(c.path) for c in catalog.cards()}
+    added = 0
+    for text in paths:
+        path = Path(text)
+        if not path.exists() or path_key(path) in root_keys:
+            continue
+        series, root_id = series_path_for(path, roots)
+        if path_key(series) not in known:
+            catalog.ensure_series(series, root_id)
+            known.add(path_key(series))
+            added += 1
+    return added

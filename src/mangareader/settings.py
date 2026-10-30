@@ -34,6 +34,7 @@ class Settings:
     book_font_size: float = 12.0
     sidebar_visible: bool = True
     window_geometry: str = ""
+    recent_imported: bool = False
 
     def add_recent(self, path: str) -> None:
         self.recent = [path] + [p for p in self.recent if p != path]

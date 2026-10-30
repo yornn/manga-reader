@@ -149,3 +149,14 @@ def test_window_can_be_narrow(window, cbz_1000x1500):
     assert window.minimumSizeHint().width() <= 700         # the library, even with the empty-library hint
     window.open_paths([cbz_1000x1500])
     assert window.minimumSizeHint().width() <= 500         # reading in half of a laptop screen
+
+
+def test_recent_files_join_the_library_once(make_window, qtbot, tmp_path):
+    import json
+    old = make_zip(tmp_path / "Old" / "c1.cbz", {"1.png": encode(page_image(1), "PNG")})
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    (data / "settings.json").write_text(json.dumps({"recent": [str(old)]}), encoding="utf-8")
+    w = make_window(qtbot)
+    assert [c.title for c in w.services.catalog.cards()] == ["Old"] and w.services.settings.recent_imported
+    assert [w.library_page.model.card_at(1).title] == ["Old"]
