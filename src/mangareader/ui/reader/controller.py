@@ -398,6 +398,25 @@ class ReaderController(QObject):
         if self._open_source(entry.path, None, self.series_root or entry.path.parent, start_page=pos.page):
             self.source_changed.emit(entry.title)
 
+    def series_page_count(self) -> int:
+        return sum(self._page_counts())
+
+    def series_page(self) -> int:
+        """The current page counted across the whole series, from 1."""
+        return sum(self._page_counts()[:self.entry_index]) + self.page + 1
+
+    def go_to_series_page(self, number: int) -> None:
+        counts = self._page_counts()
+        total = sum(counts)
+        if not total:
+            return
+        rest = max(1, min(number, total)) - 1          # past the end means the last page
+        for index, count in enumerate(counts):
+            if rest < count:
+                self.go_to(Position(index, rest))
+                return
+            rest -= count
+
     def _step(self, forward: bool) -> None:
         if self.source is None:
             return

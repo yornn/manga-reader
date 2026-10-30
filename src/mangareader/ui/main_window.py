@@ -24,7 +24,7 @@ from mangareader.export.model import load_page_image
 from mangareader.export.naming import NameFields, render_name
 from mangareader.export.writer import ExportError
 from mangareader.library.model import Kind
-from mangareader.ui.dialogs import chapter_mark_dialog, errors, hotkeys_dialog
+from mangareader.ui.dialogs import chapter_mark_dialog, errors, hotkeys_dialog, page_dialog
 from mangareader.ui.dialogs.save_dialog import SaveChoice, SaveDialog
 from mangareader.ui.library.page import UNAVAILABLE, LibraryPage
 from mangareader.ui.library.scan_runner import ScanRunner
@@ -149,9 +149,21 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.home_button)
         self.toolbar.addSeparator()
         self.crumb_label = ElidedLabel()
-        self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
-        self.toolbar.addWidget(self.page_label)
+        self.prev_chapter_button = QToolButton()
+        self.prev_chapter_button.setText(self.tr("‹ Глава"))
+        self.prev_chapter_button.setToolTip(self.tr("Предыдущая глава (Ctrl+PgUp)"))
+        self.prev_chapter_button.clicked.connect(lambda: self.controller.prev_chapter())
+        self.page_label = QToolButton()
+        self.page_label.setAutoRaise(True)
+        self.page_label.setToolTip(self.tr("Перейти к странице (Ctrl+G)"))
+        self.page_label.clicked.connect(self._go_to_page)
+        self.next_chapter_button = QToolButton()
+        self.next_chapter_button.setText(self.tr("Глава ›"))
+        self.next_chapter_button.setToolTip(self.tr("Следующая глава (Ctrl+PgDn)"))
+        self.next_chapter_button.clicked.connect(lambda: self.controller.next_chapter())
+        for widget in (self.prev_chapter_button, self.page_label, self.next_chapter_button):
+            self.toolbar.addWidget(widget)
         services = self.services
         self.nav_panel = NavPanel(services.loader, services.covers, services.store)
         self.nav_panel.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
@@ -242,6 +254,7 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Последняя страница"), c.last_page, "End")
         self._action(self.tr("Следующая глава"), c.next_chapter, "Ctrl+PgDown")
         self._action(self.tr("Предыдущая глава"), c.prev_chapter, "Ctrl+PgUp")
+        self._action(self.tr("Перейти к странице"), self._go_to_page, "Ctrl+G")
         self._action(self.tr("Отмена"), self._escape, "Esc")
         self.snip_action = self._action(self.tr("Ножницы"), self.selection.toggle, "S")
         self._action(self.tr("Копировать"), self.copy_to_clipboard, "Ctrl+C")
@@ -309,6 +322,14 @@ class MainWindow(QMainWindow):
         settings.brightness = max(MIN_BRIGHTNESS, min(100, percent))
         self.view.set_brightness(settings.brightness)
         save_settings(settings, self.services.data.settings_file)
+
+    def _go_to_page(self) -> None:
+        c = self.controller
+        if c.source is None:
+            return
+        number = page_dialog.ask_page(self, c.series_page(), c.series_page_count())
+        if number is not None:
+            c.go_to_series_page(number)
 
     def _show_hotkeys(self) -> None:
         self.gear_button.menu().close()

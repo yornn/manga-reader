@@ -199,3 +199,40 @@ def test_hribbon_direction_keeps_page(window, qtbot, tmp_path):
     c.toggle_direction()
     qtbot.wait(100)
     assert c.page == 2 and 2 in window.view.visible_pages()
+
+
+def test_go_to_series_page(window, qtbot, tmp_path):
+    s = series(tmp_path)                                  # c001: 3 pages, c002: 2 pages
+    window.open_paths([s / "c001.cbz"])
+    c = window.controller
+    qtbot.waitUntil(lambda: len(c.entries) == 2, timeout=5000)
+    assert c.series_page_count() == 5 and c.series_page() == 1
+    c.go_to_series_page(5)
+    assert c.entry.path.name == "c002.cbz" and c.page == 1 and c.series_page() == 5
+    c.go_to_series_page(1002)
+    assert c.series_page() == 5
+    c.go_to_series_page(0)
+    assert c.entry.path.name == "c001.cbz" and c.page == 0
+
+
+def test_page_button_opens_dialog(window, qtbot, tmp_path, monkeypatch):
+    from mangareader.ui.dialogs import page_dialog
+    s = series(tmp_path)
+    window.open_paths([s / "c001.cbz"])
+    qtbot.waitUntil(lambda: len(window.controller.entries) == 2, timeout=5000)
+    asked = []
+    monkeypatch.setattr(page_dialog, "ask_page", lambda parent, current, total: asked.append((current, total)) or 4)
+    window.page_label.click()
+    assert asked == [(1, 5)] and window.controller.entry_index == 1 and window.controller.page == 0
+    qtbot.keyClick(window.view, Qt.Key_G, Qt.ControlModifier)
+    assert asked[-1] == (4, 5)
+
+
+def test_chapter_buttons(window, qtbot, tmp_path):
+    s = series(tmp_path)
+    window.open_paths([s / "c001.cbz"])
+    qtbot.waitUntil(lambda: len(window.controller.entries) == 2, timeout=5000)
+    window.next_chapter_button.click()
+    assert window.controller.entry.path.name == "c002.cbz"
+    window.prev_chapter_button.click()
+    assert window.controller.entry.path.name == "c001.cbz"
