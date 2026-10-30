@@ -86,4 +86,4 @@ dist/MangaReader/MangaReader --self-test
 
 Windows-сборку делает GitHub Actions (`.github/workflows/ci.yml`, job `build-windows`). Выпуск создаётся при отправке тега `v*` (`.github/workflows/release.yml`).
 
-Спецификация: `docs/superpowers/specs/2026-10-30-manga-reader-design.md`.
+Спецификация: `docs/specs/2026-10-30-manga-reader-design.md`, планы работ — в `docs/plans/`.

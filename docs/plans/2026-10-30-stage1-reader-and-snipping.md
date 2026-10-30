@@ -1,14 +1,12 @@
 # Этап 1 «Читалка и ножницы» — план реализации
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Портативная программа для Windows (версия 0.1.0), которая открывает мангу и книги всех форматов из спецификации, показывает их в трёх режимах чтения с навигацией по томам и главам, позволяет вырезать фрагмент «ножницами» и сохранить страницу или фрагмент в любом формате.
 
 **Architecture:** Python-пакет `mangareader` в `src/`. Логические слои (`imaging`, `sources`, `library`, `export`, `settings`, `paths`) не зависят от Qt и тестируются отдельно. Слой `render` (кэш и фоновая загрузка) и слой `ui` построены на PySide6. Все данные лежат в папке `data/` рядом с exe. Сборку делает PyInstaller на Windows-машине GitHub Actions.
 
 **Tech Stack:** Python 3.13, PySide6-Essentials 6.12, PyMuPDF 2.0, Pillow 13.0 (+ pillow-jxl-plugin), 7-Zip `7zz` из py7zz 1.5, SQLite, pytest + pytest-qt, PyInstaller 6.22.
 
-**Spec:** `docs/superpowers/specs/2026-10-30-manga-reader-design.md` (этап 1 — раздел 14, п. 1). Исполнитель читает спецификацию и план вместе.
+**Spec:** `docs/specs/2026-10-30-manga-reader-design.md` (этап 1 — раздел 14, п. 1). Спецификацию и план читать вместе.
 
 ## Global Constraints
 
@@ -22,9 +20,8 @@
 - Код интерфейса вызывает диалоги и запись через атрибут модуля (`errors.ask_password(...)`, `errors.show_error(...)`, `chapter_mark_dialog.ask_chapter_mark(...)`, `writer.write_atomic(...)`), а не через `from … import`: тесты подменяют их через `monkeypatch`.
 - Тесты запускаются командой `pytest -q` из корня проекта при `QT_QPA_PLATFORM=offscreen` (выставляется в `tests/conftest.py`).
 - Версия программы `0.1.0` (`mangareader.__version__`).
-- Сообщения коммитов на английском в стиле `feat: …` / `test: …` / `build: …`. Каждое заканчивается двумя строками:
-  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` и `Claude-Session: https://claude.ai/code/session_01VJftfbMwASrKeDk7LjnP5f`.
-- Работа идёт в ветке `claude/youthful-planck-83f0n1`, после каждой задачи `git push -u origin claude/youthful-planck-83f0n1`.
+- Сообщения коммитов на английском в стиле `feat: …` / `test: …` / `build: …`.
+- Работа идёт в ветке `main`, после каждой задачи `git push origin main`.
 
 ## Review Focus
 
@@ -1316,7 +1313,7 @@ def test_kind_override_moves_node(window, qtbot, tmp_path):
 def test_thumbnails_and_mark_badge(window, qtbot, tmp_path): ...  # модель миниатюр: 6 строк; у строки 3 после отметки подпись «4 · Гл 1»
 ```
 
-  Тела двух тестов, отмеченных `...`, исполнитель пишет по комментарию в той же форме, что и соседние тесты.
+  Тела двух тестов, отмеченных `...`, пишутся по комментарию в той же форме, что и соседние тесты.
 
 - [ ] **Step 2: Запустить** → FAIL.
 
@@ -1569,8 +1566,8 @@ def test_selftest_passes(tmp_path):
 
 - [ ] **Step 8: Commit, push, проверка CI на GitHub**
 
-  `git commit -m "build: self-test, PyInstaller packaging, Windows CI build, release workflow, README"`, push. Через GitHub MCP (`actions_list`, `get_job_logs`) дождаться зелёных `test` (Ubuntu и Windows) и `build-windows`. Если что-то упало — чинить по логам (сначала воспроизвести), пока не станет зелёным.
+  `git commit -m "build: self-test, PyInstaller packaging, Windows CI build, release workflow, README"`, push. Дождаться в GitHub Actions зелёных `test` (Ubuntu и Windows) и `build-windows`. Если что-то упало — чинить по логам (сначала воспроизвести), пока не станет зелёным.
 
-- [ ] **Step 9: Выпуск 0.1.0 — только после согласия пользователя**
+- [ ] **Step 9: Выпуск 0.1.0**
 
-  Показать пользователю скриншоты и ссылку на артефакт сборки. Тег `v0.1.0` ставится и отправляется (`git tag v0.1.0 && git push origin v0.1.0`) только после явного «да», потому что это публикация.
+  Проверить скриншоты и собранный артефакт. Затем выпуск: тег `v0.1.0` (`git tag v0.1.0 && git push origin v0.1.0`) или Actions → Release → Run workflow.
