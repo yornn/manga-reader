@@ -324,6 +324,7 @@ def _in_section(card: SeriesCard, section: Section) -> bool:
 
 def filter_cards(cards: Iterable[SeriesCard], section: Section = Section(), query: str = "",
                  status: Status | None = None, sort: Sort = Sort.RECENT) -> list[SeriesCard]:
+    sort = Sort(sort)                          # Qt widgets hand the value back as a plain string
     needle = normalize(query.strip())
     found = [c for c in cards if _in_section(c, section) and (status is None or c.status is status)
              and needle in normalize(c.title)]
