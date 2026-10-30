@@ -8,7 +8,8 @@ import shutil
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 from mangareader.library.model import ChapterMark, ChapterSpan, Kind, Progress, SeriesPrefs, SourceRecord
@@ -29,12 +30,32 @@ MIGRATIONS = [
       PRIMARY KEY(source_id, page_index));
     CREATE TABLE series_prefs(series_key TEXT PRIMARY KEY, direction TEXT NOT NULL, mode TEXT NOT NULL);
     """,
+    """
+    CREATE TABLE roots(id INTEGER PRIMARY KEY, path TEXT NOT NULL, path_key TEXT NOT NULL UNIQUE,
+      added_at REAL NOT NULL);
+    CREATE TABLE series(id INTEGER PRIMARY KEY, path TEXT NOT NULL, path_key TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+      root_id INTEGER REFERENCES roots(id) ON DELETE CASCADE, added_at REAL NOT NULL, last_opened_at REAL,
+      favorite INTEGER NOT NULL DEFAULT 0, formats TEXT NOT NULL DEFAULT '',
+      cover_source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
+      last_source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL, last_label TEXT NOT NULL DEFAULT '[]');
+    CREATE TABLE shelves(id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+      icon TEXT NOT NULL, created_at REAL NOT NULL);
+    CREATE TABLE shelf_series(shelf_id INTEGER NOT NULL REFERENCES shelves(id) ON DELETE CASCADE,
+      series_id INTEGER NOT NULL REFERENCES series(id) ON DELETE CASCADE, PRIMARY KEY(shelf_id, series_id));
+    ALTER TABLE sources ADD COLUMN series_id INTEGER REFERENCES series(id) ON DELETE SET NULL;
+    CREATE INDEX sources_series ON sources(series_id);
+    ALTER TABLE progress ADD COLUMN fraction REAL NOT NULL DEFAULT 0;
+    -- book positions (chapter * 1e6 + share) are not page numbers; those books get 0 until the next opening
+    UPDATE progress SET fraction = CASE WHEN finished THEN 1.0 ELSE COALESCE(
+      (SELECT CASE WHEN progress.position < s.page_count THEN (progress.position + 1.0) / s.page_count ELSE 0 END
+       FROM sources s WHERE s.id = progress.source_id), 0) END;
+    """,
 ]
 
 _COLUMNS = "id, path, size, mtime, fingerprint, page_count, chapters_json, kind_override, spread_offset"
 
 
-def _key(path: Path) -> str:
+def path_key(path: Path) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
@@ -90,26 +111,52 @@ class Store:
             self._migrate(conn)
             return conn
 
-    def _now(self) -> float:
-        self._clock = max(time.time(), self._clock + 1e-6)
-        return self._clock
+    def now(self) -> float:
+        with self._lock:
+            self._clock = max(time.time(), self._clock + 1e-6)
+            return self._clock
+
+    def query(self, sql: str, params: Sequence = ()) -> list[tuple]:
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
+
+    def execute(self, sql: str, params: Sequence = ()) -> int:
+        with self._lock:
+            return self._conn.execute(sql, params).lastrowid
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            self._conn.execute("COMMIT")
 
     def _by_id(self, source_id: int) -> SourceRecord:
         return _record(self._conn.execute(f"SELECT {_COLUMNS} FROM sources WHERE id=?", (source_id,)).fetchone())
 
+    def source_by_id(self, source_id: int) -> SourceRecord | None:
+        with self._lock:
+            row = self._conn.execute(f"SELECT {_COLUMNS} FROM sources WHERE id=?", (source_id,)).fetchone()
+        return _record(row) if row else None
+
     def find_by_path(self, path: Path) -> SourceRecord | None:
         with self._lock:
-            row = self._conn.execute(f"SELECT {_COLUMNS} FROM sources WHERE path_key=?", (_key(path),)).fetchone()
+            row = self._conn.execute(f"SELECT {_COLUMNS} FROM sources WHERE path_key=?",
+                                     (path_key(path),)).fetchone()
         return _record(row) if row else None
 
     def register(self, path: Path, size: int, mtime: float, fingerprint: str, page_count: int,
                  chapters: Sequence[ChapterSpan]) -> SourceRecord:
-        values = (str(path), _key(path), size, mtime, fingerprint, page_count, _chapters_to_json(chapters),
+        values = (str(path), path_key(path), size, mtime, fingerprint, page_count, _chapters_to_json(chapters),
                   time.time())
         set_sql = ("UPDATE sources SET path=?, path_key=?, size=?, mtime=?, fingerprint=?, page_count=?, "
                    "chapters_json=?, last_seen=? WHERE id=?")
         with self._lock:
-            row = self._conn.execute("SELECT id FROM sources WHERE path_key=?", (_key(path),)).fetchone()
+            row = self._conn.execute("SELECT id FROM sources WHERE path_key=?", (path_key(path),)).fetchone()
             if row is None:
                 candidates = self._conn.execute("SELECT id, path FROM sources WHERE fingerprint=? ORDER BY id",
                                                 (fingerprint,)).fetchall()
@@ -133,14 +180,15 @@ class Store:
 
     def progress(self, source_id: int) -> Progress | None:
         with self._lock:
-            row = self._conn.execute("SELECT position, finished, updated_at FROM progress WHERE source_id=?",
-                                     (source_id,)).fetchone()
-        return Progress(row[0], bool(row[1]), row[2]) if row else None
+            row = self._conn.execute("SELECT position, finished, updated_at, fraction FROM progress"
+                                     " WHERE source_id=?", (source_id,)).fetchone()
+        return Progress(row[0], bool(row[1]), row[2], row[3]) if row else None
 
-    def set_progress(self, source_id: int, position: int, finished: bool) -> None:
+    def set_progress(self, source_id: int, position: int, finished: bool, fraction: float = 0.0) -> None:
+        fraction = 1.0 if finished else max(0.0, min(1.0, fraction))
         with self._lock:
-            self._conn.execute("INSERT OR REPLACE INTO progress(source_id, position, finished, updated_at)"
-                               " VALUES (?, ?, ?, ?)", (source_id, position, int(finished), self._now()))
+            self._conn.execute("INSERT OR REPLACE INTO progress(source_id, position, finished, fraction, updated_at)"
+                               " VALUES (?, ?, ?, ?, ?)", (source_id, position, int(finished), fraction, self.now()))
 
     def latest_progress(self, source_ids: Iterable[int]) -> int | None:
         ids = list(source_ids)
@@ -171,13 +219,13 @@ class Store:
     def series_prefs(self, series: Path) -> SeriesPrefs | None:
         with self._lock:
             row = self._conn.execute("SELECT direction, mode FROM series_prefs WHERE series_key=?",
-                                     (_key(series),)).fetchone()
+                                     (path_key(series),)).fetchone()
         return SeriesPrefs(*row) if row else None
 
     def set_series_prefs(self, series: Path, prefs: SeriesPrefs) -> None:
         with self._lock:
             self._conn.execute("INSERT OR REPLACE INTO series_prefs(series_key, direction, mode) VALUES (?, ?, ?)",
-                               (_key(series), prefs.direction, prefs.mode))
+                               (path_key(series), prefs.direction, prefs.mode))
 
     def close(self) -> None:
         with self._lock:

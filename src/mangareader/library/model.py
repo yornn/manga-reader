@@ -44,6 +44,7 @@ class Progress:
     position: int
     finished: bool
     updated_at: float
+    fraction: float = 0.0
 
 
 @dataclass(frozen=True)
