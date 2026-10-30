@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Test
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pytest -q
+      - name: Build portable folder and run self-test
+        shell: pwsh
+        run: |
+          Remove-Item Env:QT_QPA_PLATFORM
+          ./packaging/build_windows.ps1
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Get-ChildItem MangaReader-*-win64.zip | Select-Object -First 1
+          gh release create $env:GITHUB_REF_NAME $zip.FullName --title "Manga Reader $env:GITHUB_REF_NAME" --notes-file packaging/release-notes.md

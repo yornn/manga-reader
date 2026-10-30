@@ -87,7 +87,8 @@ def find_7zz() -> Path | None:
     if override:
         candidate = Path(override)
     elif getattr(sys, "frozen", False):
-        candidate = app_dir() / "tools" / _7zz_name()
+        # PyInstaller keeps bundled files in sys._MEIPASS (the "_internal" folder next to the exe)
+        candidate = Path(getattr(sys, "_MEIPASS", app_dir())) / "tools" / _7zz_name()
     else:
         try:
             candidate = Path(str(importlib.resources.files("py7zz") / "bin" / _7zz_name()))

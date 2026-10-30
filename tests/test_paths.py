@@ -36,3 +36,14 @@ def test_location_subpaths(tmp_path, monkeypatch):
 def test_find_7zz_in_dev_env():
     exe = find_7zz()
     assert exe is not None and exe.exists()
+
+
+def test_find_7zz_in_frozen_build(tmp_path, monkeypatch):
+    import sys
+    name = "7zz.exe" if sys.platform == "win32" else "7zz"
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools" / name).write_bytes(b"x")
+    monkeypatch.delenv("MANGAREADER_7ZZ", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert find_7zz() == tmp_path / "tools" / name
