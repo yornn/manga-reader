@@ -8,6 +8,10 @@ from mangareader.sources.base import PageSource, SourceError
 from mangareader.sources.detect import Format, detect_format
 
 
+_DOCUMENT_TYPES = {Format.PDF: "pdf", Format.EPUB: "epub", Format.FB2: "fb2", Format.MOBI: "mobi",
+                   Format.XPS: "xps", Format.TXT: "txt"}
+
+
 @dataclass(frozen=True)
 class SourceContext:
     extract_root: Path
@@ -32,4 +36,8 @@ def open_source(path: Path, ctx: SourceContext, password: str | None = None) -> 
         from mangareader.sources.sevenzip import SevenZipSource
 
         return SevenZipSource(path, ctx, password)
+    if fmt in _DOCUMENT_TYPES:
+        from mangareader.sources.document import DocumentSource
+
+        return DocumentSource(path, password, _DOCUMENT_TYPES[fmt])
     raise SourceError("Формат файла не поддерживается")
