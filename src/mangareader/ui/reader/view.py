@@ -12,6 +12,7 @@ from mangareader.render.loader import PRIORITY_PREFETCH, PageLoader
 from mangareader.ui.reader.layout import Direction
 
 CLICK_SLOP = 5
+MIN_BRIGHTNESS = 20
 WHEEL_STEP = 120
 SMOOTH_MS = 160          # one wheel notch glides for this long
 
@@ -34,6 +35,7 @@ class PageItem(QGraphicsItem):
         self._error: str | None = None
         self._exact = False
         self.wanted_size: tuple[int, int] | None = None
+        self.dim = 0.0
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, 0, self.placed.w, self.placed.h)
@@ -56,6 +58,11 @@ class PageItem(QGraphicsItem):
         self.update()
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
+        self._paint_page(painter)
+        if self.dim > 0:                               # brightness below 100 %: only the screen gets darker
+            painter.fillRect(self.boundingRect(), QColor(0, 0, 0, round(self.dim * 255)))
+
+    def _paint_page(self, painter: QPainter) -> None:
         rect = self.boundingRect()
         if self._image is not None:
             if self._exact and self._image_size == self.wanted_size:
@@ -101,6 +108,7 @@ class PageView(QGraphicsView):
         self._key: str | None = None
         self._placed: list[Placed] = []
         self._items: dict[int, PageItem] = {}
+        self._dim = 0.0
         self._direction = Direction.RTL
         self._ribbon = False
         self._zoom_mode = ZoomMode.FIT_WINDOW
@@ -134,6 +142,7 @@ class PageView(QGraphicsView):
         self._items = {}
         for p in placed:
             item = PageItem(p)
+            item.dim = self._dim
             message = self._loader.error(key, p.page)
             if message:
                 item.set_error(message)
@@ -155,6 +164,12 @@ class PageView(QGraphicsView):
             h.setValue(h.maximum() if direction is Direction.RTL else h.minimum())
         self._request_images()          # cached copies appear at once, without a placeholder flash
         self.pages_shown.emit()
+
+    def set_brightness(self, percent: int) -> None:
+        self._dim = (100 - max(MIN_BRIGHTNESS, min(100, percent))) / 100
+        for item in self._items.values():
+            item.dim = self._dim
+        self.viewport().update()
 
     def placed(self) -> list[Placed]:
         return list(self._placed)

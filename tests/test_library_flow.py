@@ -112,10 +112,11 @@ def test_reader_keys_do_not_fire_on_library(window, qtbot, tmp_path):
     assert w.controller.mode is Mode.SINGLE and w.is_library_shown()
 
 
-def test_reader_toolbar_has_home_and_no_settings(window, cbz_1000x1500):
+def test_reader_toolbar_has_home_and_reading_gear(window, cbz_1000x1500):
     window.open_paths([cbz_1000x1500])
     texts = [b.text() for b in window.toolbar.findChildren(QToolButton)]
-    assert "⌂ Главная" in texts and "⚙" not in texts
+    assert "⌂ Главная" in texts and texts.count("⚙") == 1
+    assert window.gear_button.menu().actions()[0].defaultWidget() is window.reader_settings  # reading, not the app
 
 
 def test_settings_from_menu_and_back(window, qtbot, cbz_1000x1500):

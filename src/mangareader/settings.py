@@ -32,6 +32,7 @@ class Settings:
     recent: list[str] = field(default_factory=list)
     export: ExportPrefs = field(default_factory=ExportPrefs)
     book_font_size: float = 12.0
+    brightness: int = 100
     sidebar_visible: bool = True
     window_geometry: str = ""
     recent_imported: bool = False

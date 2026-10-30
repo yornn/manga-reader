@@ -3,11 +3,12 @@ from mangareader.ui.reader.layout import Direction
 
 
 def test_font_slider_only_for_books(window, qtbot, tmp_path, cbz_1000x1500):
+    panel = window.reader_settings
     window.open_paths([cbz_1000x1500])
     qtbot.wait(50)
-    assert not window.font_slider.isVisible()
+    assert not panel.font_row.isVisibleTo(panel)
     window.open_paths([make_epub(tmp_path / "b.epub", 400)])
-    qtbot.waitUntil(window.font_slider.isVisible, timeout=2000)   # the toolbar re-lays out on the next tick
+    assert panel.font_row.isVisibleTo(panel)
     assert window.controller.direction is Direction.LTR
 
 
@@ -47,9 +48,10 @@ def test_toolbar_controls_fit_narrow_window(window, qtbot, tmp_path):
     book = make_epub(tmp_path / "Очень длинное название книги, чтобы занять всю панель инструментов" / "b.epub", 50)
     window.resize(700, 600)
     window.open_paths([book])
-    qtbot.waitUntil(window.font_slider.isVisible, timeout=2000)
-    # the font control lives in the bottom bar, which a crowded toolbar cannot push into its "»" menu
+    # the font control lives behind the gear, which a crowded toolbar cannot push into its "»" menu
+    qtbot.wait(100)
     assert not window.toolbar.isAncestorOf(window.font_slider)
+    assert window.gear_button.isVisible()
 
 
 def test_book_thumbnails_follow_layout(window, qtbot, tmp_path):
@@ -68,8 +70,8 @@ def test_toolbar_labels_do_not_overlap(window, qtbot, tmp_path):
     from helpers import encode, make_zip, page_image
     folder = tmp_path / "Очень длинное название серии, чтобы занять всю панель инструментов"
     volume = make_zip(folder / "Vol 01.cbz", {"1.png": encode(page_image(1), "PNG")})
-    window.resize(700, 600)
     window.open_paths([volume])
+    window.resize(450, 600)                      # the reader may be narrower than the library
     qtbot.wait(100)
     crumb, page = window.crumb_label, window.page_label
     assert crumb.width() >= 60 and crumb.geometry().right() < page.geometry().left()

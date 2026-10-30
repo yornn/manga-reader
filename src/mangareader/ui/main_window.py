@@ -9,7 +9,8 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
-                               QSlider, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget)
+                               QSlider, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
+                               QWidgetAction)
 
 from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
@@ -23,7 +24,7 @@ from mangareader.export.model import load_page_image
 from mangareader.export.naming import NameFields, render_name
 from mangareader.export.writer import ExportError
 from mangareader.library.model import Kind
-from mangareader.ui.dialogs import chapter_mark_dialog, errors
+from mangareader.ui.dialogs import chapter_mark_dialog, errors, hotkeys_dialog
 from mangareader.ui.dialogs.save_dialog import SaveChoice, SaveDialog
 from mangareader.ui.library.page import UNAVAILABLE, LibraryPage
 from mangareader.ui.library.scan_runner import ScanRunner
@@ -34,7 +35,8 @@ from mangareader.sources.base import SourceError
 from mangareader.ui.reader.navigation import Position
 from mangareader.ui.reader.selection import SelectionTool, pages_union, render_selection
 from mangareader.ui.reader.nav_panel import NavPanel
-from mangareader.ui.reader.view import PageView, ZoomMode
+from mangareader.ui.reader.reader_settings import ReaderSettingsPanel
+from mangareader.ui.reader.view import MIN_BRIGHTNESS, PageView, ZoomMode
 from mangareader.ui import style
 from mangareader.ui.settings_page import SettingsPage
 from mangareader.ui.toast import Toast
@@ -203,53 +205,33 @@ class MainWindow(QMainWindow):
         scanner.finished.connect(self._on_scan_finished)
         page.reload()
 
-    def _action(self, text: str, slot, shortcut=None, menu: QMenu | None = None, checkable=False,
-                reader: bool = True) -> QAction:
-        """A menu item or hotkey; reader ones work only while the reader is shown."""
+    def _action(self, text: str, slot, shortcut, reader: bool = True) -> QAction:
+        """A hotkey of the window; reader ones work only while the reader is shown."""
         action = QAction(text, self)
         if reader:
             self._reader_actions.append(action)
-        if shortcut is not None:
-            shortcuts = shortcut if isinstance(shortcut, list) else [shortcut]
-            action.setShortcuts([QKeySequence(s) for s in shortcuts])
-            action.setShortcutContext(Qt.WindowShortcut)
-        action.setCheckable(checkable)
+        shortcuts = shortcut if isinstance(shortcut, list) else [shortcut]
+        action.setShortcuts([QKeySequence(s) for s in shortcuts])
+        action.setShortcutContext(Qt.WindowShortcut)
         action.triggered.connect(slot)
         self.addAction(action)
-        if menu is not None:
-            menu.addAction(action)
         return action
 
     def _build_actions(self) -> None:
+        # no menu bar: every action is a hotkey, listed in the hotkey sheet behind the reader's gear
         c = self.controller
-        file_menu = self.menuBar().addMenu(self.tr("Файл"))
-        self._action(self.tr("Открыть файл…"), self._open_file_dialog, "Ctrl+O", file_menu, reader=False)
-        self._action(self.tr("Открыть папку…"), self._open_folder_dialog, "Ctrl+Shift+O", file_menu, reader=False)
-        self.recent_menu = file_menu.addMenu(self.tr("Недавние"))
-        self.recent_menu.aboutToShow.connect(self._fill_recent)
-        self._action(self.tr("Главная"), self.go_home, "Backspace", file_menu)
-        file_menu.addSeparator()
-        self._action(self.tr("Выход"), self.close, None, file_menu, reader=False)
-
-        view_menu = self.menuBar().addMenu(self.tr("Вид"))
-        self.mode_menu = view_menu.addMenu(self.tr("Режим"))
-        for key, mode, text in (("1", Mode.SINGLE, self.tr("Одна страница")), ("2", Mode.SPREAD, self.tr("Разворот")),
-                                ("3", Mode.RIBBON, self.tr("Вертикальная лента")),
-                                ("4", Mode.HRIBBON, self.tr("Горизонтальная лента"))):
-            self._action(text, lambda _=False, m=mode: c.set_mode(m), key, self.mode_menu)
-        self.zoom_menu = view_menu.addMenu(self.tr("Масштаб"))
-        for key, zoom, text in (("W", ZoomMode.FIT_WIDTH, self.tr("По ширине")),
-                                ("H", ZoomMode.FIT_HEIGHT, self.tr("По высоте")),
-                                ("F", ZoomMode.FIT_WINDOW, self.tr("Целиком в окне")),
-                                ("Z", ZoomMode.ACTUAL, self.tr("100%"))):
-            self._action(text, lambda _=False, z=zoom: self.view.set_zoom_mode(z), key, self.zoom_menu)
-        self._action(self.tr("Сменить направление чтения"), c.toggle_direction, "D", view_menu)
-        self._action(self.tr("Сдвиг разворота"), c.toggle_spread_offset, "O", view_menu)
-        view_menu.addSeparator()
-        self._action(self.tr("Показать или скрыть панель"), self._toggle_sidebar, "Tab", view_menu)
-        self._action(self.tr("Полный экран"), self._toggle_fullscreen, "F11", view_menu, reader=False)
-        self._action(self.tr("Настройки…"), self.show_settings, None, view_menu, reader=False)
-
+        self._action(self.tr("Открыть файл…"), self._open_file_dialog, "Ctrl+O", reader=False)
+        self._action(self.tr("Открыть папку…"), self._open_folder_dialog, "Ctrl+Shift+O", reader=False)
+        self._action(self.tr("Полный экран"), self._toggle_fullscreen, "F11", reader=False)
+        self._action(self.tr("Главная"), self.go_home, "Backspace")
+        for key, mode in (("1", Mode.SINGLE), ("2", Mode.SPREAD), ("3", Mode.RIBBON), ("4", Mode.HRIBBON)):
+            self._action(mode.value, lambda _=False, m=mode: self._set_mode(m), key)
+        for key, zoom in (("W", ZoomMode.FIT_WIDTH), ("H", ZoomMode.FIT_HEIGHT), ("F", ZoomMode.FIT_WINDOW),
+                          ("Z", ZoomMode.ACTUAL)):
+            self._action(zoom.value, lambda _=False, z=zoom: self.view.set_zoom_mode(z), key)
+        self._action(self.tr("Сменить направление чтения"), c.toggle_direction, "D")
+        self._action(self.tr("Сдвиг разворота"), c.toggle_spread_offset, "O")
+        self._action(self.tr("Показать или скрыть панель"), self._toggle_sidebar, "Tab")
         self._action(self.tr("Влево"), lambda: self._arrow(left=True), "Left")
         self._action(self.tr("Вправо"), lambda: self._arrow(left=False), "Right")
         self._action(self.tr("Вперёд"), lambda: self._space(True), "Space")
@@ -261,11 +243,10 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Следующая глава"), c.next_chapter, "Ctrl+PgDown")
         self._action(self.tr("Предыдущая глава"), c.prev_chapter, "Ctrl+PgUp")
         self._action(self.tr("Отмена"), self._escape, "Esc")
-        edit_menu = self.menuBar().addMenu(self.tr("Правка"))
-        self.snip_action = self._action(self.tr("Ножницы"), self.selection.toggle, "S", edit_menu)
-        self._action(self.tr("Копировать"), self.copy_to_clipboard, "Ctrl+C", edit_menu)
-        self._action(self.tr("Сохранить…"), lambda: self.save_current(), "Ctrl+S", edit_menu)
-        self._action(self.tr("Быстрое сохранение"), lambda: self.save_current(quick=True), "Ctrl+Shift+S", edit_menu)
+        self.snip_action = self._action(self.tr("Ножницы"), self.selection.toggle, "S")
+        self._action(self.tr("Копировать"), self.copy_to_clipboard, "Ctrl+C")
+        self._action(self.tr("Сохранить…"), lambda: self.save_current(), "Ctrl+S")
+        self._action(self.tr("Быстрое сохранение"), lambda: self.save_current(quick=True), "Ctrl+Shift+S")
         self._action(self.tr("Сохранить выделение"), self._enter, ["Return", "Enter"])
 
         bar = self.toolbar
@@ -280,32 +261,58 @@ class MainWindow(QMainWindow):
         save_button.setToolTip(self.tr("Сохранить (Ctrl+S)"))
         save_button.clicked.connect(lambda: self.save_current())
         bar.addWidget(save_button)
-        for title, menu in ((self.tr("Режим"), self.mode_menu), (self.tr("Масштаб"), self.zoom_menu)):
-            button = QToolButton()
-            button.setText(title)
-            button.setMenu(menu)
-            button.setPopupMode(QToolButton.InstantPopup)
-            bar.addWidget(button)
-        self.direction_button = QToolButton()
-        self.direction_button.clicked.connect(c.toggle_direction)
-        bar.addWidget(self.direction_button)
-        font_box = QWidget()
-        font_layout = QHBoxLayout(font_box)
-        font_layout.setContentsMargins(6, 0, 6, 0)
-        font_layout.addWidget(QLabel(self.tr("Шрифт")))
-        self.font_slider = QSlider(Qt.Horizontal)
-        self.font_slider.setRange(8, 24)
-        self.font_slider.setFixedWidth(120)
-        self.font_slider.setValue(round(self.services.settings.book_font_size))
+        self._build_gear()
+
+    def _build_gear(self) -> None:
+        panel = self.reader_settings = ReaderSettingsPanel()
+        c = self.controller
+        panel.mode_chosen.connect(lambda mode: self._set_mode(Mode(mode)))
+        panel.zoom_chosen.connect(lambda zoom: self.view.set_zoom_mode(ZoomMode(zoom)))
+        panel.direction_chosen.connect(
+            lambda d: c.toggle_direction() if Direction(d) is not c.direction else None)
+        panel.spread_offset_toggled.connect(c.toggle_spread_offset)
+        panel.brightness_changed.connect(self._set_brightness)
+        panel.hotkeys_requested.connect(self._show_hotkeys)
+        self.font_slider = panel.font_slider
         self._font_timer = QTimer(self)
         self._font_timer.setSingleShot(True)
         self._font_timer.setInterval(300)
         self._font_timer.timeout.connect(lambda: self.controller.set_font_size(self.font_slider.value()))
-        self.font_slider.valueChanged.connect(lambda _: self._font_timer.start())
-        font_layout.addWidget(self.font_slider)
-        self.font_box = font_box
-        self.font_box.setVisible(False)
-        self.bottom_bar.addWidget(font_box)
+        panel.font_size_changed.connect(lambda _: self._font_timer.start())
+        menu = QMenu(self)
+        holder = QWidgetAction(menu)
+        holder.setDefaultWidget(panel)
+        menu.addAction(holder)
+        menu.aboutToShow.connect(self._sync_reader_settings)
+        self.gear_button = QToolButton()
+        self.gear_button.setText("⚙")
+        self.gear_button.setToolTip(self.tr("Настройки чтения"))
+        self.gear_button.setMenu(menu)
+        self.gear_button.setPopupMode(QToolButton.InstantPopup)
+        self.toolbar.addWidget(self.gear_button)
+        self.view.set_brightness(self.services.settings.brightness)
+        self._sync_reader_settings()
+
+    def _sync_reader_settings(self) -> None:
+        c = self.controller
+        self.reader_settings.sync(c.mode, self.view.zoom_mode, c.direction,
+                                  bool(c.record and c.record.spread_offset), self.services.settings.brightness,
+                                  self.services.settings.book_font_size,
+                                  bool(c.source and c.source.is_reflowable))
+
+    def _set_mode(self, mode: Mode) -> None:
+        self.controller.set_mode(mode)
+        self._sync_reader_settings()
+
+    def _set_brightness(self, percent: int) -> None:
+        settings = self.services.settings
+        settings.brightness = max(MIN_BRIGHTNESS, min(100, percent))
+        self.view.set_brightness(settings.brightness)
+        save_settings(settings, self.services.data.settings_file)
+
+    def _show_hotkeys(self) -> None:
+        self.gear_button.menu().close()
+        hotkeys_dialog.show_hotkeys(self)
 
     # -- pages ---------------------------------------------------------------------------------------
     def is_library_shown(self) -> bool:
@@ -416,14 +423,6 @@ class MainWindow(QMainWindow):
         if path:
             self.open_paths([path])
 
-    def _fill_recent(self) -> None:
-        self.recent_menu.clear()
-        for path in self.services.settings.recent:
-            action = self.recent_menu.addAction(path)
-            action.triggered.connect(lambda _=False, p=path: self.open_paths([p]))
-        if not self.services.settings.recent:
-            self.recent_menu.addAction(self.tr("Пусто")).setEnabled(False)
-
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -460,7 +459,7 @@ class MainWindow(QMainWindow):
     # -- navigation panel -----------------------------------------------------------------------------------
     def _on_source_opened(self) -> None:
         c = self.controller
-        self.font_box.setVisible(bool(c.source and c.source.is_reflowable))
+        self._sync_reader_settings()
         self.nav_panel.set_tree(c.display_tree())
         self.nav_panel.set_source(c.source_key, c.entry_index, len(c.source.pages), c.marks(), c.markable())
 
@@ -635,8 +634,6 @@ class MainWindow(QMainWindow):
         self.page_label.setText(self.page_label_text())
         series = c.tree.title if c.tree else (c.series_root.name if c.series_root else "")
         self.setWindowTitle(f"{APP_TITLE} — {series}" if series else APP_TITLE)
-        self.direction_button.setText(self.tr("Справа налево") if c.direction is Direction.RTL
-                                      else self.tr("Слева направо"))
         self._slider_busy = True
         total = len(c.source.pages) if c.source else 1
         self.slider.setMaximum(max(0, total - 1))
