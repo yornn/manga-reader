@@ -4,8 +4,8 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QThreadPool
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QSizePolicy, QSlider,
                                QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
@@ -13,8 +13,14 @@ from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
 from mangareader.sources.detect import OPENABLE_EXTS
 from mangareader.library.classify import suggest_chapter_number
+from mangareader.export import writer
+from mangareader.export.encoders import EncodeOptions, OutFormat, Resize, encode_fragment, encode_page
+from mangareader.export.model import load_page_image
+from mangareader.export.naming import NameFields, render_name
+from mangareader.export.writer import ExportError
 from mangareader.library.model import Kind
 from mangareader.ui.dialogs import chapter_mark_dialog, errors
+from mangareader.ui.dialogs.save_dialog import SaveChoice, SaveDialog
 from mangareader.ui.dialogs.settings_dialog import SettingsDialog
 from mangareader.ui.reader.controller import ReaderController, Services
 from mangareader.ui.reader.layout import Direction, Mode
@@ -39,6 +45,7 @@ class MainWindow(QMainWindow):
         self.view = PageView(services.loader)
         self.controller = ReaderController(services, self.view, self)
         self.selection = SelectionTool(self.view)
+        self.selection.save_requested.connect(self.save_current)
         self.controller.password_provider = lambda path, wrong: errors.ask_password(self, path.name, wrong)
         self.controller.state_changed.connect(self._refresh_labels)
         self.controller.source_changed.connect(lambda title: Toast.show_message(self, title))
@@ -141,6 +148,8 @@ class MainWindow(QMainWindow):
         edit_menu = self.menuBar().addMenu(self.tr("Правка"))
         self.snip_action = self._action(self.tr("Ножницы"), self.selection.toggle, "S", edit_menu)
         self._action(self.tr("Копировать"), self.copy_to_clipboard, "Ctrl+C", edit_menu)
+        self._action(self.tr("Сохранить…"), lambda: self.save_current(), "Ctrl+S", edit_menu)
+        self._action(self.tr("Быстрое сохранение"), lambda: self.save_current(quick=True), "Ctrl+Shift+S", edit_menu)
         self._action(self.tr("Сохранить выделение"), self._enter, ["Return", "Enter"])
 
         bar = self.toolbar
@@ -150,6 +159,11 @@ class MainWindow(QMainWindow):
         snip_button.setToolTip(self.tr("Ножницы (S)"))
         snip_button.clicked.connect(self.selection.toggle)
         bar.addWidget(snip_button)
+        save_button = QToolButton()
+        save_button.setText("💾")
+        save_button.setToolTip(self.tr("Сохранить (Ctrl+S)"))
+        save_button.clicked.connect(lambda: self.save_current())
+        bar.addWidget(save_button)
         for title, menu in ((self.tr("Режим"), self.mode_menu), (self.tr("Масштаб"), self.zoom_menu)):
             button = QToolButton()
             button.setText(title)
@@ -290,6 +304,97 @@ class MainWindow(QMainWindow):
             return
         QGuiApplication.clipboard().setImage(pil_to_qimage(image))
         Toast.show_message(self, self.tr("Скопировано в буфер обмена"))
+
+    # -- saving ------------------------------------------------------------------------------------------
+    def default_name_fields(self, page: int | None = None) -> NameFields:
+        c = self.controller
+        page = c.page if page is None else page
+        entry = c.entry
+        tree = c.display_tree()
+        node = next((n for n in (tree.nodes if tree else []) if entry in n.entries), None)
+        volume = node.number if node is not None and node.kind is Kind.VOLUME else None
+        chapter = None
+        if entry is not None and entry.chapters:
+            before = [span for span in entry.chapters if span.start_page <= page]
+            chapter = before[-1].number if before else None
+        elif entry is not None and entry.kind is Kind.CHAPTER:
+            chapter = entry.number
+        ref = c.source.pages[page]
+        file = Path(ref.inner_path).stem if c.source.kind == "images" else None
+        series = tree.title if tree else ""
+        return NameFields(series, volume, chapter, page + 1, len(c.source.pages), file)
+
+    def _choose(self, quick: bool, *, default_name: str, is_spread: bool, is_fragment: bool, jpeg_source: bool,
+                estimate) -> SaveChoice | None:
+        prefs = self.services.settings.export
+        if quick and prefs.folder:
+            options = EncodeOptions(OutFormat(prefs.fmt), prefs.quality, Resize(prefs.resize_mode, prefs.resize_value))
+            return SaveChoice(options, prefs.spread_layout, Path(prefs.folder), default_name)
+        dialog = SaveDialog(self, prefs, default_name=default_name, is_spread=is_spread, is_fragment=is_fragment,
+                            jpeg_source=jpeg_source, estimate=estimate)
+        if not dialog.exec():
+            return None
+        dialog.store_into(prefs)
+        return dialog.choice()
+
+    def save_current(self, quick: bool = False) -> list[Path]:
+        c = self.controller
+        if c.source is None:
+            return []
+        prefs = self.services.settings.export
+        fragment = self.selection.active and self.selection.rect() is not None
+        group = list(c.current_group)
+        is_spread = not fragment and len(group) > 1
+        default_name = render_name(prefs.template, self.default_name_fields(group[0] if group else c.page))
+        if fragment:
+            pages = [p.page for p in self.view.placed() if
+                     QRectF(p.x, p.y, p.w, p.h).intersects(self.selection.rect())]
+        else:
+            pages = group
+        jpeg_source = all(c.source.pages[p].ext in (".jpg", ".jpeg") for p in pages) if pages else False
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            if fragment or is_spread:
+                image, sources = self._render_target()
+                estimate = lambda o: len(encode_fragment(image, sources, o).data)  # noqa: E731
+            else:
+                page_image = load_page_image(c.source, group[0])
+                estimate = lambda o: len(encode_page(page_image, o).data)  # noqa: E731
+        except SourceError as e:
+            QApplication.restoreOverrideCursor()
+            self._show_error(str(e))
+            return []
+        QApplication.restoreOverrideCursor()
+        choice = self._choose(quick, default_name=default_name, is_spread=is_spread, is_fragment=fragment,
+                              jpeg_source=jpeg_source, estimate=estimate)
+        if choice is None:
+            return []
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            if fragment or (is_spread and choice.spread_layout == "stitched"):
+                outputs = [(choice.filename, encode_fragment(image, sources, choice.options))]
+            elif is_spread:
+                outputs = [(render_name(prefs.template, self.default_name_fields(p)),
+                            encode_page(load_page_image(c.source, p), choice.options)) for p in group]
+            else:
+                outputs = [(choice.filename, encode_page(page_image, choice.options))]
+            written = []
+            for name, encoded in outputs:
+                path = writer.unique_path(choice.folder, name, encoded.ext)
+                writer.write_atomic(path, encoded.data)
+                written.append(path)
+        except (ExportError, SourceError) as e:
+            QApplication.restoreOverrideCursor()
+            errors.show_error(self, str(e), self.services.data.logs / LOG_NAME)
+            return []
+        QApplication.restoreOverrideCursor()
+        save_settings(self.services.settings, self.services.data.settings_file)
+        folder = choice.folder
+        Toast.show_message(self, self.tr("Сохранено: ") + ", ".join(p.name for p in written),
+                           (self.tr("Открыть папку"), lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))))
+        if fragment:
+            self.selection.deactivate()
+        return written
 
     def _toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
