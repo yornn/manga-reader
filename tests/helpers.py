@@ -112,3 +112,13 @@ def make_fb2(path: Path, text: str) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def card(**kw):
+    from mangareader.library.catalog import SeriesCard
+
+    values = dict(id=1, path=Path("S"), title="S", root_id=None, added_at=0.0, last_opened_at=None, favorite=False,
+                  formats=("CBZ",), cover_source_id=None, last_source_id=None, where=(), shelf_ids=frozenset(),
+                  available=True, pages_total=0, pages_read=0.0, sources=1, opened=0, finished=0)
+    values.update(kw)
+    return SeriesCard(**values)

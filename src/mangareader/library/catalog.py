@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import math
 import os
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 
 from mangareader.library.classify import is_inside
 from mangareader.library.store import Store, path_key
+from mangareader.sources.natsort import natural_key
 
 
 class Status(StrEnum):
@@ -263,3 +267,121 @@ class Catalog:
         with self.store.transaction() as conn:
             conn.executemany("DELETE FROM shelf_series WHERE shelf_id=? AND series_id=?",
                              [(shelf_id, sid) for sid in series_ids])
+
+
+# -- views over the cards (no database access) -------------------------------------------------------
+class SectionKind(StrEnum):
+    ALL = "all"
+    FAVORITES = "favorites"
+    FORMAT = "format"
+    SHELF = "shelf"
+
+
+@dataclass(frozen=True)
+class Section:
+    kind: SectionKind = SectionKind.ALL
+    value: str | int | None = None
+
+
+class Sort(StrEnum):
+    RECENT = "recent"
+    TITLE = "title"
+    ADDED = "added"
+
+
+FORMAT_ORDER = ("CBZ", "CBR", "CB7", "ZIP", "RAR", "7Z", "PDF", "EPUB", "FB2", "MOBI", "XPS", "TXT", "Папка")
+FOLDER_FORMAT = "Папка"
+_LABEL_BY_EXT = {".oxps": "XPS"}
+
+
+def format_label(path: Path) -> str:
+    path = Path(path)
+    if path.is_dir():
+        return FOLDER_FORMAT
+    ext = path.suffix.lower()
+    return _LABEL_BY_EXT.get(ext, ext.lstrip(".").upper())
+
+
+def series_formats(paths: Iterable[Path]) -> list[str]:
+    counts = Counter(format_label(p) for p in paths)
+    order = {f: i for i, f in enumerate(FORMAT_ORDER)}
+    return sorted(counts, key=lambda f: (-counts[f], order.get(f, len(order)), f))
+
+
+def normalize(text: str) -> str:
+    return text.casefold().replace("ё", "е")
+
+
+def _in_section(card: SeriesCard, section: Section) -> bool:
+    if section.kind is SectionKind.FAVORITES:
+        return card.favorite
+    if section.kind is SectionKind.FORMAT:
+        return section.value in card.formats
+    if section.kind is SectionKind.SHELF:
+        return section.value in card.shelf_ids
+    return True
+
+
+def filter_cards(cards: Iterable[SeriesCard], section: Section = Section(), query: str = "",
+                 status: Status | None = None, sort: Sort = Sort.RECENT) -> list[SeriesCard]:
+    needle = normalize(query.strip())
+    found = [c for c in cards if _in_section(c, section) and (status is None or c.status is status)
+             and needle in normalize(c.title)]
+    if sort is Sort.TITLE:
+        found.sort(key=lambda c: natural_key(normalize(c.title)))
+    elif sort is Sort.ADDED:
+        found.sort(key=lambda c: -c.added_at)
+    else:
+        found.sort(key=lambda c: (c.last_opened_at is None, -(c.last_opened_at or 0.0), -c.added_at))
+    return found
+
+
+def continue_reading(cards: Iterable[SeriesCard], limit: int = 5) -> list[SeriesCard]:
+    reading = [c for c in cards if c.status is Status.READING and c.last_opened_at is not None]
+    reading.sort(key=lambda c: -c.last_opened_at)
+    return reading[:limit]
+
+
+def format_counts(cards: Iterable[SeriesCard]) -> list[tuple[str, int]]:
+    counts = Counter(f for c in cards for f in set(c.formats))
+    known = [(f, counts[f]) for f in FORMAT_ORDER if counts[f]]
+    return known + sorted((f, n) for f, n in counts.items() if f not in FORMAT_ORDER)
+
+
+def percent(card: SeriesCard) -> int:
+    value = math.floor(card.progress * 100)
+    return value if card.status is Status.FINISHED else min(99, value)
+
+
+def tile_caption(card: SeriesCard) -> str:
+    if not card.available:
+        return "недоступно"
+    if card.status is Status.FINISHED:
+        return "прочитано"
+    if card.status is Status.NOT_STARTED:
+        return "не начато"
+    return f"{card.where[0]} · {percent(card)}%" if card.where else f"{percent(card)}%"
+
+
+def continue_caption(card: SeriesCard) -> str:
+    return " · ".join(card.where) if card.where else f"{percent(card)}%"
+
+
+def _plural_days(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "день"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "дня"
+    return "дней"
+
+
+def when_text(ts: float, now: float) -> str:
+    then = datetime.fromtimestamp(ts)
+    days = (date.fromtimestamp(now) - then.date()).days
+    if days <= 0:
+        return "сегодня"
+    if days == 1:
+        return "вчера"
+    if days < 7:
+        return f"{days} {_plural_days(days)} назад"
+    return then.strftime("%d.%m.%Y")
