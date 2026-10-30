@@ -6,7 +6,7 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
                                QSlider, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
@@ -37,6 +37,33 @@ from mangareader.ui.toast import Toast
 
 APP_TITLE = "Manga Reader"
 log = logging.getLogger("mangareader.ui")
+
+
+class ElidedLabel(QLabel):
+    """A label that takes the free toolbar width and shortens its text with "…" instead of crowding."""
+
+    def __init__(self):
+        super().__init__()
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text
+        self.setToolTip(text)
+        self._elide()
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(60, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.fontMetrics().horizontalAdvance(self._full) + 8, super().sizeHint().height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.ElideMiddle, max(0, self.width() - 4)))
 
 
 @contextmanager
@@ -76,10 +103,7 @@ class MainWindow(QMainWindow):
         self.toolbar = QToolBar(self.tr("Панель"))
         self.toolbar.setMovable(False)
         self.addToolBar(self.toolbar)
-        self.crumb_label = QLabel()
-        # the breadcrumb takes the leftover width and gets clipped, so the toolbar controls never overflow
-        self.crumb_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.crumb_label.setMinimumWidth(80)
+        self.crumb_label = ElidedLabel()
         self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
         self.toolbar.addWidget(self.page_label)
@@ -455,7 +479,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_labels(self) -> None:
         c = self.controller
-        self.crumb_label.setText(self.breadcrumb_text())
+        self.crumb_label.set_full_text(self.breadcrumb_text())
         self.page_label.setText(self.page_label_text())
         series = c.tree.title if c.tree else (c.series_root.name if c.series_root else "")
         self.setWindowTitle(f"{APP_TITLE} — {series}" if series else APP_TITLE)

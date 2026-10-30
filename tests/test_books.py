@@ -62,3 +62,13 @@ def test_book_thumbnails_follow_layout(window, qtbot, tmp_path):
     qtbot.waitUntil(lambda: loader.thumbnail(c.source_key, 0) is not None, timeout=5000)
     fresh = pil_to_qimage(ThumbnailStore(tmp_path / "fresh").create(c.source, 0, "x"))
     assert loader.thumbnail(c.source_key, 0) == fresh    # rendered for the current layout, not the old one
+
+
+def test_toolbar_labels_do_not_overlap(window, qtbot, tmp_path):
+    book = make_epub(tmp_path / "Очень длинное название книги, чтобы занять всю панель инструментов" / "b.epub", 50)
+    window.resize(700, 600)
+    window.open_paths([book])
+    qtbot.wait(100)
+    crumb, page = window.crumb_label, window.page_label
+    assert crumb.width() >= 60 and crumb.geometry().right() < page.geometry().left()
+    assert "…" in crumb.text()           # the long breadcrumb is shortened, not drawn over the buttons
