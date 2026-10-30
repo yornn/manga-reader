@@ -21,3 +21,27 @@ def ctx(tmp_path):
     from mangareader.sources import SourceContext
 
     return SourceContext(extract_root=tmp_path / "extract", seven_zip=find_7zz())
+
+
+@pytest.fixture
+def make_window(qtbot):
+    def factory(_qtbot=None):
+        from mangareader.paths import resolve_data_location
+        from mangareader.ui.main_window import MainWindow
+        from mangareader.ui.reader.controller import make_services
+
+        window = MainWindow(make_services(resolve_data_location()))
+        qtbot.addWidget(window)
+        window.resize(900, 700)
+        with qtbot.waitExposed(window):
+            window.show()
+        with qtbot.waitActive(window):
+            window.raise_()
+            window.activateWindow()
+        return window
+    return factory
+
+
+@pytest.fixture
+def window(make_window):
+    return make_window()

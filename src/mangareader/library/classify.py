@@ -221,6 +221,24 @@ def _sort_key(item) -> tuple:
     return _number_value(item.number), natural_key(item.title)
 
 
+def entry_from_info(path: Path, info: SourceInfo, in_volume_folder: bool = False) -> SourceEntry:
+    name = _stem(path)
+    if in_volume_folder:
+        kind = Kind.CHAPTER
+    elif info.kind_override:
+        kind = info.kind_override
+    elif info.internal:
+        kind = Kind.VOLUME
+    else:
+        kind = name_kind(name) or (Kind.VOLUME if info.page_count >= VOLUME_PAGES else Kind.CHAPTER)
+    number = extract_number(name, kind)
+    word = "Том" if kind is Kind.VOLUME else "Глава"
+    title = f"{word} {number}" if number else name
+    chapters = chapter_spans(info.internal, info.marks) if kind is Kind.VOLUME else []
+    return SourceEntry(path, kind, number, title, info.page_count, chapters, info.record_id, info.locked,
+                       in_volume_folder)
+
+
 def classify_series(root: Path, probe: Callable[[Path], SourceInfo]) -> SeriesTree:
     failed: list[tuple[Path, str]] = []
 
@@ -232,21 +250,7 @@ def classify_series(root: Path, probe: Callable[[Path], SourceInfo]) -> SeriesTr
             return None
         if info.page_count == 0 and not info.locked:
             return None
-        name = _stem(path)
-        if in_folder:
-            kind = Kind.CHAPTER
-        elif info.kind_override:
-            kind = info.kind_override
-        elif info.internal:
-            kind = Kind.VOLUME
-        else:
-            kind = name_kind(name) or (Kind.VOLUME if info.page_count >= VOLUME_PAGES else Kind.CHAPTER)
-        number = extract_number(name, kind)
-        word = "Том" if kind is Kind.VOLUME else "Глава"
-        title = f"{word} {number}" if number else name
-        chapters = chapter_spans(info.internal, info.marks) if kind is Kind.VOLUME else []
-        return SourceEntry(path, kind, number, title, info.page_count, chapters, info.record_id, info.locked,
-                           in_folder)
+        return entry_from_info(path, info, in_folder)
 
     volumes: list[TreeNode] = []
     chapters: list[TreeNode] = []
