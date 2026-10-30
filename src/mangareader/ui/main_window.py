@@ -5,7 +5,7 @@ import base64
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QThreadPool
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QSizePolicy, QSlider,
                                QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
@@ -18,7 +18,10 @@ from mangareader.ui.dialogs import chapter_mark_dialog, errors
 from mangareader.ui.dialogs.settings_dialog import SettingsDialog
 from mangareader.ui.reader.controller import ReaderController, Services
 from mangareader.ui.reader.layout import Direction, Mode
+from mangareader.render.loader import pil_to_qimage
+from mangareader.sources.base import SourceError
 from mangareader.ui.reader.navigation import Position
+from mangareader.ui.reader.selection import SelectionTool, pages_union, render_selection
 from mangareader.ui.reader.sidebar import Sidebar
 from mangareader.ui.reader.view import PageView, ZoomMode
 from mangareader.ui.theme import apply_theme
@@ -35,6 +38,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.view = PageView(services.loader)
         self.controller = ReaderController(services, self.view, self)
+        self.selection = SelectionTool(self.view)
         self.controller.password_provider = lambda path, wrong: errors.ask_password(self, path.name, wrong)
         self.controller.state_changed.connect(self._refresh_labels)
         self.controller.source_changed.connect(lambda title: Toast.show_message(self, title))
@@ -133,10 +137,19 @@ class MainWindow(QMainWindow):
         self._action(self.tr("Последняя страница"), c.last_page, "End")
         self._action(self.tr("Следующая глава"), c.next_chapter, "Ctrl+PgDown")
         self._action(self.tr("Предыдущая глава"), c.prev_chapter, "Ctrl+PgUp")
-        self._action(self.tr("Выйти из полного экрана"), self._leave_fullscreen, "Esc")
+        self._action(self.tr("Отмена"), self._escape, "Esc")
+        edit_menu = self.menuBar().addMenu(self.tr("Правка"))
+        self.snip_action = self._action(self.tr("Ножницы"), self.selection.toggle, "S", edit_menu)
+        self._action(self.tr("Копировать"), self.copy_to_clipboard, "Ctrl+C", edit_menu)
+        self._action(self.tr("Сохранить выделение"), self._enter, ["Return", "Enter"])
 
         bar = self.toolbar
         bar.addSeparator()
+        snip_button = QToolButton()
+        snip_button.setText("✂")
+        snip_button.setToolTip(self.tr("Ножницы (S)"))
+        snip_button.clicked.connect(self.selection.toggle)
+        bar.addWidget(snip_button)
         for title, menu in ((self.tr("Режим"), self.mode_menu), (self.tr("Масштаб"), self.zoom_menu)):
             button = QToolButton()
             button.setText(title)
@@ -240,6 +253,43 @@ class MainWindow(QMainWindow):
         answer = chapter_mark_dialog.ask_chapter_mark(self, mark.number, mark.title)
         if answer:
             self.controller.add_chapter_mark(page, *answer)
+
+    def _escape(self) -> None:
+        if self.selection.active:
+            self.selection.deactivate()
+        else:
+            self._leave_fullscreen()
+
+    def _enter(self) -> None:
+        if self.selection.active and self.selection.rect() is not None:
+            self.selection.save_requested.emit()
+
+    # -- snipping ------------------------------------------------------------------------------------
+    def _target_placed(self):
+        # without a selection, save/copy applies to the shown group (or the focused ribbon page)
+        placed = self.view.placed()
+        return [p for p in placed if p.page in self.controller.current_group] or placed
+
+    def _render_target(self):
+        rect = self.selection.rect() if self.selection.active else None
+        if rect is None:
+            rect = pages_union(self._target_placed())
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            return render_selection(self.controller.source, self.view.placed(), rect)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def copy_to_clipboard(self) -> None:
+        if self.controller.source is None:
+            return
+        try:
+            image, _ = self._render_target()
+        except SourceError as e:
+            self._show_error(str(e))
+            return
+        QGuiApplication.clipboard().setImage(pil_to_qimage(image))
+        Toast.show_message(self, self.tr("Скопировано в буфер обмена"))
 
     def _toggle_fullscreen(self) -> None:
         self.showNormal() if self.isFullScreen() else self.showFullScreen()

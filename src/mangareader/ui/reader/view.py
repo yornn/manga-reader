@@ -83,6 +83,7 @@ class PageView(QGraphicsView):
     flip_requested = Signal(bool)
     visible_page_changed = Signal(int)
     resized = Signal()
+    pages_shown = Signal()
 
     def __init__(self, loader: PageLoader, parent=None):
         super().__init__(parent)
@@ -142,6 +143,7 @@ class PageView(QGraphicsView):
             h = self.horizontalScrollBar()
             h.setValue(h.maximum() if direction is Direction.RTL else h.minimum())
         self._refresh.start()
+        self.pages_shown.emit()
 
     def placed(self) -> list[Placed]:
         return list(self._placed)

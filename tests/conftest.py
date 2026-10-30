@@ -45,3 +45,18 @@ def make_window(qtbot):
 @pytest.fixture
 def window(make_window):
     return make_window()
+
+
+@pytest.fixture
+def cbz_1000x1500(tmp_path):
+    from helpers import encode, make_zip, page_image
+
+    return make_zip(tmp_path / "S" / "one.cbz", {"001.png": encode(page_image(1, (1000, 1500)), "PNG")})
+
+
+@pytest.fixture
+def cbz_spread(tmp_path):
+    from helpers import encode, make_zip, page_image
+
+    pages = {f"{i:03}.png": encode(page_image(i, (1000, 1500)), "PNG") for i in range(3)}
+    return make_zip(tmp_path / "S" / "spread.cbz", pages)
