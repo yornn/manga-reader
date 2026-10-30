@@ -12,12 +12,14 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 from mangareader.library.classify import (SeriesTree, SourceEntry, SourceInfo, TreeNode, chapter_spans,
                                           entry_from_info, find_series_root, internal_chapters, is_inside,
                                           is_volume_folder)
+from mangareader.library.catalog import Catalog
 from mangareader.library.fingerprint import fingerprint
 from mangareader.library.model import ChapterMark, Kind, SeriesPrefs, SourceRecord
 from mangareader.library.scanner import scan_series
 from mangareader.library.store import Store
 from mangareader.paths import DataLocation, find_7zz
 from mangareader.render.cache import ImageCache
+from mangareader.render.covers import CoverLoader
 from mangareader.render.loader import PageLoader
 from mangareader.render.thumbs import ThumbnailStore
 from mangareader.settings import Settings, load_settings
@@ -44,6 +46,8 @@ class Services:
     thumbs: ThumbnailStore
     loader: PageLoader
     extract_claim: ExtractClaim
+    catalog: Catalog
+    covers: CoverLoader
 
     def shutdown(self) -> None:
         self.store.close()
@@ -55,8 +59,10 @@ def make_services(data: DataLocation) -> Services:
     claim = claim_extract_dir(data.extract)
     cache = ImageCache(settings.cache_mb * 2**20)
     thumbs = ThumbnailStore(data.thumbs)
-    return Services(data, settings, Store(data.db), SourceContext(claim.path, find_7zz()), cache, thumbs,
-                    PageLoader(cache, thumbs), claim)
+    store = Store(data.db)
+    ctx = SourceContext(claim.path, find_7zz())
+    return Services(data, settings, store, ctx, cache, thumbs, PageLoader(cache, thumbs), claim, Catalog(store),
+                    CoverLoader(store, thumbs, ctx))
 
 
 class _ScanTask(QRunnable):
