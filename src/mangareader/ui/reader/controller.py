@@ -98,6 +98,12 @@ class ReaderController(QObject):
         self._relayout.setSingleShot(True)
         self._relayout.setInterval(150)
         self._relayout.timeout.connect(self._apply_sizes)
+        self._fingerprint = ""
+        self._book_relayout = QTimer(self)
+        self._book_relayout.setSingleShot(True)
+        self._book_relayout.setInterval(300)
+        self._book_relayout.timeout.connect(self._relayout_book)
+        view.resized.connect(self._on_view_resized)
         services.loader.size_known.connect(self._on_size_known)
         view.visible_page_changed.connect(self._on_ribbon_page)
         view.flip_requested.connect(lambda forward: self.next() if forward else self.prev())
@@ -176,7 +182,8 @@ class ReaderController(QObject):
             size, mtime = st.st_size, st.st_mtime
         fp = fingerprint(source)
         self.record = store.register(path, size, mtime, fp, len(source.pages), tuple(internal_chapters(source.pages)))
-        self.source, self.source_key = source, str(path)
+        self.source, self.source_key, self._fingerprint = source, str(path), fp
+        self._layout_book()
         self.services.loader.register(self.source_key, source, fp)
         if self.series_root is None or os.path.normcase(str(self.series_root)) != os.path.normcase(str(series_root)):
             self.series_root = series_root
@@ -291,6 +298,36 @@ class ReaderController(QObject):
             self.page = page
             self._save_progress()
             self.state_changed.emit()
+
+    # -- books -----------------------------------------------------------------------------------------
+    def _layout_book(self) -> None:
+        # lay a reflowable book out for the current window and font size
+        viewport = self.view.viewport()
+        self.source.relayout(max(200, viewport.width()), max(200, viewport.height()),
+                             self.services.settings.book_font_size)
+
+    def _relayout_book(self) -> None:
+        source = self.source
+        if source is None or not source.is_reflowable:
+            return
+        token = source.position_token(self.page)
+        self._layout_book()
+        loader = self.services.loader
+        loader.unregister(self.source_key)
+        loader.register(self.source_key, source, self._fingerprint)
+        self.sizes = [None] * len(source.pages)
+        loader.probe_sizes(self.source_key)
+        self.source_opened.emit()
+        self._rebuild_groups()
+        self._show(source.page_for_token(token))
+
+    def _on_view_resized(self) -> None:
+        if self.source is not None and self.source.is_reflowable:
+            self._book_relayout.start()
+
+    def set_font_size(self, size: float) -> None:
+        self.services.settings.book_font_size = size
+        self._relayout_book()
 
     # -- navigation ---------------------------------------------------------------------------
     def _page_counts(self) -> list[int]:

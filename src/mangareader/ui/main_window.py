@@ -4,10 +4,10 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QUrl
+from PySide6.QtCore import QByteArray, QRectF, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow, QMenu, QSizePolicy, QSlider,
-                               QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
+                               QSlider, QSplitter, QToolBar, QToolButton, QVBoxLayout, QWidget)
 
 from mangareader.logging_setup import LOG_NAME
 from mangareader.settings import save_settings
@@ -173,6 +173,22 @@ class MainWindow(QMainWindow):
         self.direction_button = QToolButton()
         self.direction_button.clicked.connect(c.toggle_direction)
         bar.addWidget(self.direction_button)
+        font_box = QWidget()
+        font_layout = QHBoxLayout(font_box)
+        font_layout.setContentsMargins(6, 0, 6, 0)
+        font_layout.addWidget(QLabel(self.tr("Шрифт")))
+        self.font_slider = QSlider(Qt.Horizontal)
+        self.font_slider.setRange(8, 24)
+        self.font_slider.setFixedWidth(120)
+        self.font_slider.setValue(round(self.services.settings.book_font_size))
+        self._font_timer = QTimer(self)
+        self._font_timer.setSingleShot(True)
+        self._font_timer.setInterval(300)
+        self._font_timer.timeout.connect(lambda: self.controller.set_font_size(self.font_slider.value()))
+        self.font_slider.valueChanged.connect(lambda _: self._font_timer.start())
+        font_layout.addWidget(self.font_slider)
+        self.font_action = bar.addWidget(font_box)
+        self.font_action.setVisible(False)
         settings_button = QToolButton()
         settings_button.setText("⚙")
         settings_button.setToolTip(self.tr("Настройки"))
@@ -245,6 +261,7 @@ class MainWindow(QMainWindow):
     # -- sidebar -----------------------------------------------------------------------------------
     def _on_source_opened(self) -> None:
         c = self.controller
+        self.font_action.setVisible(bool(c.source and c.source.is_reflowable))
         self.sidebar.set_tree(c.display_tree())
         self.sidebar.set_source(c.source_key, len(c.source.pages), c.marks(), c.markable())
 

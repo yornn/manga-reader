@@ -21,6 +21,7 @@ DEFAULT_REFLOW = (800, 1131, 12.0)
 _EXT = {"jpeg": ".jpg", "jpg": ".jpg", "png": ".png", "jpx": ".jp2", "bmp": ".bmp", "tiff": ".tif",
         "tif": ".tif", "webp": ".webp"}
 _BROKEN = "Документ повреждён или не поддерживается"
+_CHAPTER_SPAN = 1_000_000
 
 
 class DocumentSource(PageSource):
@@ -120,18 +121,27 @@ class DocumentSource(PageSource):
         scale = self._dpi() / 72
         return round(rect.width * scale), round(rect.height * scale)
 
+    # Reading position of a reflowable book: chapter number plus the position of the page's middle
+    # inside the chapter, in millionths. Unlike MuPDF bookmarks (in-memory pointers) this survives
+    # reopening the file and changing the font size.
     def position_token(self, i: int) -> int:
         if not self.is_reflowable:
             return i
         with self._lock:
-            return int(self._doc.make_bookmark(self._doc.location_from_page_number(i)))
+            chapter, page_in_chapter = self._doc.location_from_page_number(i)
+            pages = max(1, self._doc.chapter_page_count(chapter))
+        return chapter * _CHAPTER_SPAN + ((2 * page_in_chapter + 1) * _CHAPTER_SPAN) // (2 * pages)
 
     def page_for_token(self, token: int) -> int:
         if not self.is_reflowable:
             return super().page_for_token(token)
+        chapter, fraction = divmod(max(0, token), _CHAPTER_SPAN)
         with self._lock:
             try:
-                page = self._doc.page_number_from_location(self._doc.find_bookmark(token))
+                chapter = min(chapter, self._doc.chapter_count - 1)
+                pages = max(1, self._doc.chapter_page_count(chapter))
+                page_in_chapter = min(pages - 1, fraction * pages // _CHAPTER_SPAN)
+                page = self._doc.page_number_from_location((chapter, page_in_chapter))
             except Exception:
                 page = 0
         return super().page_for_token(page)

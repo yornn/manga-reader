@@ -1,0 +1,43 @@
+from helpers import make_epub
+from mangareader.ui.reader.layout import Direction
+
+
+def test_font_slider_only_for_books(window, qtbot, tmp_path, cbz_1000x1500):
+    window.open_paths([cbz_1000x1500])
+    qtbot.wait(50)
+    assert not window.font_slider.isVisible()
+    window.open_paths([make_epub(tmp_path / "b.epub", 400)])
+    qtbot.waitUntil(window.font_slider.isVisible, timeout=2000)   # the toolbar re-lays out on the next tick
+    assert window.controller.direction is Direction.LTR
+
+
+def test_font_change_keeps_position(window, qtbot, tmp_path):
+    window.open_paths([make_epub(tmp_path / "b.epub", 400)])
+    c = window.controller
+    for _ in range(5):
+        c.next()
+    n1, p1 = len(c.source.pages), c.position.page
+    c.set_font_size(20)
+    n2, p2 = len(c.source.pages), c.position.page
+    assert n2 > n1 and abs(p2 / n2 - p1 / n1) < 0.1 and window.services.settings.book_font_size == 20
+    assert window.sidebar.thumb_view.model().rowCount() == n2
+
+
+def test_resize_relayouts(window, qtbot, tmp_path):
+    window.open_paths([make_epub(tmp_path / "b.epub", 400)])
+    n1 = len(window.controller.source.pages)
+    window.resize(window.width() // 2, window.height())
+    qtbot.waitUntil(lambda: len(window.controller.source.pages) != n1, timeout=3000)
+
+
+def test_book_progress_survives_reopen(make_window, qtbot, tmp_path):
+    book = make_epub(tmp_path / "b.epub", 400)
+    w1 = make_window(qtbot)
+    w1.open_paths([book])
+    for _ in range(6):
+        w1.controller.next()
+    ratio = w1.controller.position.page / len(w1.controller.source.pages)
+    w1.close()
+    w2 = make_window(qtbot)
+    w2.open_paths([book])
+    assert abs(w2.controller.position.page / len(w2.controller.source.pages) - ratio) < 0.1

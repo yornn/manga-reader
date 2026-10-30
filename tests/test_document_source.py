@@ -80,3 +80,15 @@ def test_concurrent_render(tmp_path, ctx):                     # Review Focus 5
     with ThreadPoolExecutor(4) as ex:
         sizes = list(ex.map(lambda i: src.load_image(i % 6).image.size, range(24)))
     assert set(sizes) == {(600, 900)}
+
+
+def test_epub_position_survives_reopen(tmp_path, ctx):
+    book = make_epub(tmp_path / "b.epub", 400)
+    first = open_source(book, ctx)
+    mid = len(first.pages) // 2
+    token = first.position_token(mid)
+    first.close()
+    second = open_source(book, ctx)
+    assert second.page_for_token(token) == mid
+    second.relayout(800, 1131, 20)
+    assert abs(second.page_for_token(token) / len(second.pages) - mid / len(first.pages)) < 0.1
