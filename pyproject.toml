@@ -31,6 +31,9 @@ version = { attr = "mangareader.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"mangareader.ui.icons" = ["lucide/*.svg", "lucide/LICENSE"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"

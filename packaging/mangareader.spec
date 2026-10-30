@@ -12,7 +12,7 @@ a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src")],
     binaries=[(str(BIN / name), "tools") for name in TOOLS if (BIN / name).exists()],
-    datas=[],
+    datas=[(str(ROOT / "src" / "mangareader" / "ui" / "icons" / "lucide"), "mangareader/ui/icons/lucide")],
     hiddenimports=["pillow_jxl"],
     # PyMuPDF 2.0 installs an optional ML layout analyser (pymupdf.layout + onnxruntime + numpy) and
     # imports it inside try/except ImportError; the reader does not need it, so it is left out.
