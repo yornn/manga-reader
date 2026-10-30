@@ -1,4 +1,4 @@
-"""Error and password dialogs."""
+"""Error, password and confirmation dialogs."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,3 +30,11 @@ def ask_password(parent: QWidget | None, file_name: str, wrong: bool) -> str | N
     prompt = _tr("Неверный пароль. Попробуйте ещё раз:") if wrong else _tr("Файл защищён паролем:")
     text, ok = QInputDialog.getText(parent, _tr("Пароль"), f"{file_name}\n{prompt}", QLineEdit.Password)
     return text if ok and text else None
+
+
+def confirm(parent: QWidget | None, text: str) -> bool:
+    box = QMessageBox(QMessageBox.Question, _tr("Подтверждение"), text, parent=parent)
+    yes = box.addButton(_tr("Да"), QMessageBox.YesRole)
+    box.setDefaultButton(box.addButton(_tr("Нет"), QMessageBox.NoRole))
+    box.exec()
+    return box.clickedButton() is yes
