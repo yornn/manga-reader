@@ -130,3 +130,14 @@ def test_unexpected_probe_error_does_not_sink_scan(tmp_path):
     tree = classify_series(tmp_path, probe)
     assert [e.path.name for e in tree.reading_order()] == ["c002.cbz"]
     assert tree.failed[0][0].name == "c001.cbz" and tree.failed[0][1]
+
+
+def test_single_file_and_image_folder_series(tmp_path):
+    f = tmp_path / "Книга.epub"
+    f.write_bytes(b"x")
+    tree = classify_series(f, lambda p: SourceInfo(30, (), None, (), 1))
+    assert tree.title == "Книга" and [e.path for e in tree.reading_order()] == [f]
+    art = tmp_path / "Artbook"
+    art.mkdir()
+    (art / "1.png").write_bytes(b"x")
+    assert [e.path for e in classify_series(art, lambda p: SourceInfo(1, (), None, (), 2)).reading_order()] == [art]

@@ -122,3 +122,19 @@ def card(**kw):
                   available=True, pages_total=0, pages_read=0.0, sources=1, opened=0, finished=0)
     values.update(kw)
     return SeriesCard(**values)
+
+
+def library(tmp_path: Path) -> Path:
+    """A library folder: a two-volume series, a book, an image folder and some clutter."""
+    lib = tmp_path / "Манга"
+    for v in (1, 2):
+        make_zip(lib / "Berserk" / f"Vol {v:02}.cbz", {f"{i}.png": encode(page_image(i), "PNG") for i in range(3)})
+    make_epub(lib / "Ведьмак.epub", 30)
+    art = lib / "Artbook"
+    art.mkdir(parents=True)
+    for i in range(2):
+        (art / f"{i}.png").write_bytes(encode(page_image(i), "PNG"))
+    (lib / "empty").mkdir()
+    make_zip(lib / ".hidden" / "x.cbz", {"1.png": encode(page_image(1), "PNG")})
+    (lib / "notes.txt").write_text("x", encoding="utf-8")
+    return lib

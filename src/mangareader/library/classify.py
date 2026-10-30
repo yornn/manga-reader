@@ -177,14 +177,14 @@ def _stem(path: Path) -> str:
     return path.name if path.is_dir() else path.stem
 
 
-def _visible(entry: Path) -> bool:
+def is_visible(entry: Path) -> bool:
     return not entry.name.startswith(".") and not is_junk(entry.name)
 
 
 def _contains_sources(folder: Path) -> bool:
     try:
         for child in folder.iterdir():
-            if not _visible(child):
+            if not is_visible(child):
                 continue
             if child.is_file() and child.suffix.lower() in SOURCE_EXTS:
                 return True
@@ -202,7 +202,7 @@ def list_children(folder: Path) -> tuple[list[Path], list[Path]]:
     except OSError:
         return [], []
     for child in children:
-        if not _visible(child):
+        if not is_visible(child):
             continue
         if child.is_file():
             if child.suffix.lower() in SOURCE_EXTS:
@@ -267,6 +267,12 @@ def classify_series(root: Path, probe: Callable[[Path], SourceInfo]) -> SeriesTr
         if info.page_count == 0 and not info.locked:
             return None
         return entry_from_info(path, info, in_folder)
+
+    if root.is_file() or has_direct_images(root):
+        # a series of one source: a lone book or archive, or a folder of pages
+        entry = make_entry(root, False)
+        nodes = [TreeNode(entry.kind, entry.title, entry.number, [entry])] if entry else []
+        return SeriesTree(root, _stem(root), nodes, failed)
 
     volumes: list[TreeNode] = []
     chapters: list[TreeNode] = []
