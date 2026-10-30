@@ -27,7 +27,8 @@ from mangareader.sources import SourceContext, open_source
 from mangareader.sources.base import PageSource, PasswordRequired, SourceError
 from mangareader.sources.folder import has_direct_images
 from mangareader.sources.sevenzip import ExtractClaim, claim_extract_dir, release_extract_dir
-from mangareader.ui.reader.layout import Direction, Mode, group_index, place_group, place_ribbon, view_groups
+from mangareader.ui.reader.layout import (RIBBON_MODES, Direction, Mode, group_index, place_group, place_hribbon,
+                                         place_ribbon, view_groups)
 from mangareader.ui.reader.navigation import Position, chapter_starts, step, step_chapter
 from mangareader.ui.reader.view import PageView
 
@@ -132,7 +133,7 @@ class ReaderController(QObject):
     def current_group(self) -> list[int]:
         if not self.groups:
             return []
-        if self.mode is Mode.RIBBON:
+        if self.mode in RIBBON_MODES:
             return [self.page]
         return self.groups[group_index(self.groups, self.page)]
 
@@ -269,12 +270,18 @@ class ReaderController(QObject):
         offset = self.record.spread_offset if self.record else 0
         self.groups = view_groups(self.mode, self.sizes, offset)
 
+    def _ribbon_placed(self):
+        if self.mode is Mode.HRIBBON:
+            return place_hribbon(self.sizes, self.direction)
+        return place_ribbon(self.sizes)
+
     def _show(self, page: int) -> None:
         if self.source is None or not self.groups:
             return
-        if self.mode is Mode.RIBBON:
+        if self.mode in RIBBON_MODES:
             self.page = page
-            self.view.show_pages(self.source_key, place_ribbon(self.sizes), self.direction, ribbon=True,
+            self.view.show_pages(self.source_key, self._ribbon_placed(), self.direction, ribbon=True,
+                                 horizontal=self.mode is Mode.HRIBBON,
                                  focus_page=page)
             neighbours = [page + 1, page + 2, page - 1]
             self.services.loader.prefetch(self.source_key, [p for p in neighbours if 0 <= p < len(self.sizes)])
@@ -295,7 +302,7 @@ class ReaderController(QObject):
     def _save_progress(self) -> None:
         if self.record is None or self.source is None:
             return
-        last = self.page >= len(self.source.pages) - 1 if self.mode is Mode.RIBBON else (
+        last = self.page >= len(self.source.pages) - 1 if self.mode in RIBBON_MODES else (
             group_index(self.groups, self.page) == len(self.groups) - 1)
         fraction = 1.0 if last else (self.page + 1) / len(self.source.pages)
         self.services.store.set_progress(self.record.id, self.source.position_token(self.page), last, fraction)
@@ -311,10 +318,11 @@ class ReaderController(QObject):
         if self.source is None:
             return
         self._rebuild_groups()
-        if self.mode is Mode.RIBBON:
-            placed = place_ribbon(self.sizes)
+        if self.mode in RIBBON_MODES:
+            placed = self._ribbon_placed()
             if placed != self.view.placed():
-                self.view.show_pages(self.source_key, placed, self.direction, ribbon=True, focus_page=self.page,
+                self.view.show_pages(self.source_key, placed, self.direction, ribbon=True,
+                                     horizontal=self.mode is Mode.HRIBBON, focus_page=self.page,
                                      anchor=self.view.ribbon_anchor())
             return
         gi = group_index(self.groups, self.page)
@@ -324,7 +332,7 @@ class ReaderController(QObject):
             self._prepare_neighbours(gi)
 
     def _on_ribbon_page(self, page: int) -> None:
-        if self.mode is Mode.RIBBON and self.source is not None:
+        if self.mode in RIBBON_MODES and self.source is not None:
             self.page = page
             self._save_progress()
             self.state_changed.emit()
@@ -378,7 +386,7 @@ class ReaderController(QObject):
         if not 0 <= pos.entry < len(self.entries):
             return
         if pos.entry == self.entry_index:
-            if self.mode is Mode.RIBBON:
+            if self.mode in RIBBON_MODES:
                 self.page = pos.page
                 self.view.scroll_to_page(pos.page)
                 self._save_progress()
@@ -393,7 +401,7 @@ class ReaderController(QObject):
     def _step(self, forward: bool) -> None:
         if self.source is None:
             return
-        if self.mode is Mode.RIBBON:
+        if self.mode in RIBBON_MODES:
             target = self.page + (1 if forward else -1)
             if 0 <= target < len(self.source.pages):
                 self.go_to(Position(self.entry_index, target))

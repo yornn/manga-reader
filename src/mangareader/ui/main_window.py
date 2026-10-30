@@ -234,7 +234,8 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu(self.tr("Вид"))
         self.mode_menu = view_menu.addMenu(self.tr("Режим"))
         for key, mode, text in (("1", Mode.SINGLE, self.tr("Одна страница")), ("2", Mode.SPREAD, self.tr("Разворот")),
-                                ("3", Mode.RIBBON, self.tr("Вертикальная лента"))):
+                                ("3", Mode.RIBBON, self.tr("Вертикальная лента")),
+                                ("4", Mode.HRIBBON, self.tr("Горизонтальная лента"))):
             self._action(text, lambda _=False, m=mode: c.set_mode(m), key, self.mode_menu)
         self.zoom_menu = view_menu.addMenu(self.tr("Масштаб"))
         for key, zoom, text in (("W", ZoomMode.FIT_WIDTH, self.tr("По ширине")),

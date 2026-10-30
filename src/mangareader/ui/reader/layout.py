@@ -15,6 +15,10 @@ class Mode(StrEnum):
     SINGLE = "single"
     SPREAD = "spread"
     RIBBON = "ribbon"
+    HRIBBON = "hribbon"
+
+
+RIBBON_MODES = frozenset({Mode.RIBBON, Mode.HRIBBON})
 
 
 class Direction(StrEnum):
@@ -52,7 +56,7 @@ def spread_groups(sizes: Sequence[Size], offset: int) -> list[list[int]]:
 def view_groups(mode: Mode, sizes: Sequence[Size], offset: int) -> list[list[int]]:
     if mode is Mode.SPREAD:
         return spread_groups(sizes, offset)
-    if mode is Mode.RIBBON:
+    if mode in RIBBON_MODES:
         return [list(range(len(sizes)))] if sizes else []
     return [[i] for i in range(len(sizes))]
 
@@ -94,4 +98,23 @@ def place_ribbon(sizes: Sequence[Size]) -> list[Placed]:
         height = h * width / w
         placed.append(Placed(page, 0, y, width, height, w, h))
         y += height
+    return placed
+
+
+def place_hribbon(sizes: Sequence[Size], direction: Direction) -> list[Placed]:
+    """All pages in one row at the height of the tallest; right to left puts the first page on the right."""
+    if not sizes:
+        return []
+    height = max(_size(sizes, i)[1] for i in range(len(sizes)))
+    widths = []
+    for page in range(len(sizes)):
+        w, h = _size(sizes, page)
+        widths.append(w * height / h)
+    total = sum(widths)
+    placed, x = [], 0.0
+    for page in range(len(sizes)):
+        w, h = _size(sizes, page)
+        left = x if direction is Direction.LTR else total - x - widths[page]
+        placed.append(Placed(page, left, 0, widths[page], height, w, h))
+        x += widths[page]
     return placed

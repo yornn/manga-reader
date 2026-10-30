@@ -121,14 +121,16 @@ class PageView(QGraphicsView):
         loader.scaled_ready.connect(self._on_scaled)
         loader.failed.connect(self._on_failed)
         self.verticalScrollBar().valueChanged.connect(self._on_scrolled)
-        self.horizontalScrollBar().valueChanged.connect(lambda _: self._refresh.start())
+        self.horizontalScrollBar().valueChanged.connect(self._on_scrolled)
 
     # -- content ------------------------------------------------------------------
     def show_pages(self, key: str, placed: list[Placed], direction: Direction, ribbon: bool = False,
-                   focus_page: int | None = None, anchor: tuple[int, float] | None = None) -> None:
+                   focus_page: int | None = None, anchor: tuple[int, float] | None = None,
+                   horizontal: bool = False) -> None:
         self._scroll_anim.stop()                    # a glide must not carry over to the next page
         self.scene().clear()
         self._key, self._placed, self._direction, self._ribbon = key, list(placed), direction, ribbon
+        self._horizontal = ribbon and horizontal
         self._items = {}
         for p in placed:
             item = PageItem(p)
@@ -180,11 +182,18 @@ class PageView(QGraphicsView):
         self._zoom_mode = ZoomMode.CUSTOM
         self._apply_zoom()
 
-    def _fit_height_basis(self, placed: list[Placed], ribbon: bool) -> float:
+    def _fit_basis(self, placed: list[Placed], ribbon: bool) -> tuple[float, float]:
+        # the width and height the fit modes match: the whole group, or in a ribbon the page being read
+        width = max(p.x + p.w for p in placed) - min(p.x for p in placed)
+        height = max(p.y + p.h for p in placed) - min(p.y for p in placed)
         if ribbon:
             page = self._visible_page if self._visible_page is not None else placed[0].page
-            return next((p.h for p in placed if p.page == page), placed[0].h)
-        return max(p.y + p.h for p in placed) - min(p.y for p in placed)
+            current = next((p for p in placed if p.page == page), placed[0])
+            if self._horizontal:
+                width = current.w
+            else:
+                height = current.h
+        return width, height
 
     def _target_scale(self) -> float:
         return self.scale_for(self._placed, self._ribbon)
@@ -197,12 +206,12 @@ class PageView(QGraphicsView):
             return 1 / self.devicePixelRatioF()
         if not placed:
             return 1.0
-        width = max(p.x + p.w for p in placed) - min(p.x for p in placed)
-        if width <= 0:
+        width, height = self._fit_basis(placed, ribbon)
+        if width <= 0 or height <= 0:
             return 1.0
         vp = self.viewport()
         by_width = vp.width() / width
-        by_height = vp.height() / self._fit_height_basis(placed, ribbon)
+        by_height = vp.height() / height
         if self._zoom_mode is ZoomMode.FIT_WIDTH:
             return by_width
         if self._zoom_mode is ZoomMode.FIT_HEIGHT:
@@ -217,7 +226,9 @@ class PageView(QGraphicsView):
     # -- images ---------------------------------------------------------------------
     def visible_pages(self) -> list[int]:
         area = self.mapToScene(self.viewport().rect()).boundingRect()
-        if self._ribbon:
+        if self._ribbon and self._horizontal:
+            area.adjust(-area.width(), 0, area.width(), 0)
+        elif self._ribbon:
             area.adjust(0, -area.height(), 0, area.height())
         return [p.page for p in self._placed if area.intersects(QRectF(p.x, p.y, p.w, p.h))]
 
@@ -273,13 +284,30 @@ class PageView(QGraphicsView):
         target = next((p for p in self._placed if p.page == page), None)
         if target is None:
             return
+        if self._horizontal:
+            # the page's leading edge (its right edge when reading right to left) to the view's leading edge
+            bar = self.horizontalScrollBar()
+            if self._direction is Direction.RTL:
+                edge = self.mapFromScene(QPointF(target.x + (1 - fraction) * target.w, 0)).x()
+                bar.setValue(bar.value() + edge - self.viewport().width())
+            else:
+                bar.setValue(bar.value() + self.mapFromScene(QPointF(target.x + fraction * target.w, 0)).x())
+            self._visible_page = page
+            return
         top = self.mapFromScene(QPointF(target.x, target.y + fraction * target.h))
         bar = self.verticalScrollBar()
         bar.setValue(bar.value() + top.y())
         self._visible_page = page
 
     def ribbon_anchor(self) -> tuple[int, float] | None:
-        # which page is at the top of the view, and how far into it
+        # which page is at the top of the view (the leading edge of a horizontal ribbon), and how far into it
+        if self._horizontal:
+            rtl = self._direction is Direction.RTL
+            x = self.mapToScene(QPoint(self.viewport().width() if rtl else 0, 0)).x()
+            for p in self._placed:
+                if p.x <= x < p.x + p.w or (rtl and p.x < x <= p.x + p.w):
+                    return p.page, ((p.x + p.w - x) if rtl else (x - p.x)) / p.w
+            return None
         top = self.mapToScene(QPoint(0, 0)).y()
         for p in self._placed:
             if p.y <= top < p.y + p.h:
@@ -291,7 +319,10 @@ class PageView(QGraphicsView):
         if not self._ribbon or not self._placed:
             return
         center = self.mapToScene(self.viewport().rect().center())
-        page = next((p.page for p in self._placed if p.y <= center.y() < p.y + p.h), None)
+        if self._horizontal:
+            page = next((p.page for p in self._placed if p.x <= center.x() < p.x + p.w), None)
+        else:
+            page = next((p.page for p in self._placed if p.y <= center.y() < p.y + p.h), None)
         if page is not None and page != self._visible_page:
             self._visible_page = page
             self.visible_page_changed.emit(page)

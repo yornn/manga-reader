@@ -153,3 +153,12 @@ def test_page_is_painted(view, qtbot, mode):
     img = view.viewport().grab().toImage()
     c = img.pixelColor(img.width() // 2, img.height() // 2)
     assert (c.red(), c.green(), c.blue()) == (53, 97, 31)
+
+
+def test_wheel_moves_horizontal_ribbon_forward(view, qtbot):
+    from mangareader.ui.reader.layout import place_hribbon
+    view.show_pages("k", place_hribbon(SIZE * 3, Direction.RTL), Direction.RTL, ribbon=True, horizontal=True)
+    bar = view.horizontalScrollBar()
+    assert bar.value() == bar.maximum() > 0                  # right to left starts at the right end
+    send_wheel(view, -120)                                   # "down" means forward
+    qtbot.waitUntil(lambda: bar.value() < bar.maximum() - 50, timeout=1000)

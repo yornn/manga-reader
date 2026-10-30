@@ -6,6 +6,7 @@ import mangareader
 from helpers import encode, make_7z, make_zip, page_image
 from mangareader.ui.dialogs import errors
 from mangareader.ui.reader.layout import Direction, Mode
+from mangareader.ui.reader.navigation import Position
 from mangareader.ui.toast import Toast
 
 
@@ -170,3 +171,31 @@ def test_opened_file_missing_from_tree_keeps_its_own_list(window, qtbot, tmp_pat
     window.nav_panel.position_selected.emit(1, 0)        # must not index past the controller's list
     assert window.controller.entry.path.name == "notes.txt"
     assert [n.title for n in window.controller.display_tree().nodes] == ["notes"]
+
+
+def hribbon_window(window, qtbot, tmp_path, direction=None):
+    s = tmp_path / "S"
+    make_zip(s / "w.cbz", {f"{i:03}.png": encode(page_image(i, (800, 1200)), "PNG") for i in range(5)})
+    window.open_paths([s / "w.cbz"])
+    c = window.controller
+    c.set_mode(Mode.HRIBBON)
+    qtbot.waitUntil(lambda: all(x is not None for x in c.sizes), timeout=5000)
+    qtbot.wait(300)
+    return c
+
+
+def test_hribbon_next_scrolls_and_saves(window, qtbot, tmp_path):
+    c = hribbon_window(window, qtbot, tmp_path)
+    assert window.view.horizontalScrollBar().maximum() > 0
+    c.next()
+    assert c.page == 1 and window.services.store.progress(c.record.id).position == 1
+    qtbot.keyClick(window.view, Qt.Key_4)
+    assert c.mode is Mode.HRIBBON
+
+
+def test_hribbon_direction_keeps_page(window, qtbot, tmp_path):
+    c = hribbon_window(window, qtbot, tmp_path)
+    c.go_to(Position(0, 2))
+    c.toggle_direction()
+    qtbot.wait(100)
+    assert c.page == 2 and 2 in window.view.visible_pages()

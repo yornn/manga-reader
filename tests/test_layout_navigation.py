@@ -76,3 +76,14 @@ def test_chapter_navigation():
 
 def test_chapter_starts_adds_page_zero():
     assert chapter_starts([entry(chapters=[span(5)])]) == [Position(0, 0), Position(0, 5)]
+
+
+def test_place_hribbon_rtl_and_ltr():
+    from mangareader.ui.reader.layout import place_hribbon
+    sizes = [(1000, 1500), (2000, 1500), None]
+    rtl = place_hribbon(sizes, Direction.RTL)
+    assert {p.h for p in rtl} == {1500}
+    assert rtl[0].x > rtl[1].x > rtl[2].x and rtl[2].x == 0       # the first page sits on the right
+    ltr = place_hribbon(sizes, Direction.LTR)
+    assert ltr[0].x == 0 and ltr[1].x == ltr[0].w and ltr[2].x == ltr[1].x + ltr[1].w
+    assert view_groups(Mode.HRIBBON, sizes, 0) == [[0, 1, 2]]
