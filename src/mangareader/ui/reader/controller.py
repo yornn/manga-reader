@@ -80,6 +80,7 @@ class _ScanTask(QRunnable):
 class ReaderController(QObject):
     state_changed = Signal()
     tree_changed = Signal()
+    tree_scanned = Signal(object)
     source_opened = Signal()
     source_changed = Signal(str)
     error = Signal(str)
@@ -136,13 +137,14 @@ class ReaderController(QObject):
         return self.groups[group_index(self.groups, self.page)]
 
     # -- opening --------------------------------------------------------------------------
-    def open_path(self, path: Path, password: str | None = None) -> bool:
+    def open_path(self, path: Path, password: str | None = None, series: Path | None = None) -> bool:
+        """Open a file or folder; `series` is the series it belongs to (folder or file), if the library knows it."""
         path = Path(path)
         if not path.exists():
             self.error.emit(f"Файл не найден: {path.name}")
             return False
         if path.is_dir() and not has_direct_images(path):
-            root = path.parent if is_volume_folder(path) else path
+            root = Path(series) if series is not None else (path.parent if is_volume_folder(path) else path)
             tree = scan_series(root, self.services.store, self.services.ctx)
             inside = [e for e in tree.reading_order() if is_inside(e.path, path)]
             if not inside:
@@ -154,7 +156,7 @@ class ReaderController(QObject):
                 return False
             self._set_tree(tree)
             return True
-        root = find_series_root(path)
+        root = Path(series) if series is not None else find_series_root(path)
         if not self._open_source(path, password, root):
             return False
         self._start_scan(root)
@@ -246,6 +248,7 @@ class ReaderController(QObject):
         self._set_tree(tree)
 
     def _set_tree(self, tree: SeriesTree) -> None:
+        self.tree_scanned.emit(tree)
         if self.source is not None:
             index = tree.index_of(self.source.path)
             if index is None:  # e.g. a .txt the scan skips: keep the list that holds just this file
@@ -468,6 +471,14 @@ class ReaderController(QObject):
             if part and (not result or result[-1] != part):
                 result.append(part)
         return result
+
+    def where_parts(self) -> list[str]:
+        """Where the reader stopped, for the library: ["Том 3", "Глава 21", "стр. 45"]; empty for a lone file."""
+        if self.source is None or self.series_root is None:
+            return []
+        if os.path.normcase(os.path.abspath(self.series_root)) == os.path.normcase(os.path.abspath(self.source.path)):
+            return []
+        return self.breadcrumb()[1:] + [f"стр. {self.page + 1}"]
 
     def page_label(self) -> str:
         if self.source is None:
