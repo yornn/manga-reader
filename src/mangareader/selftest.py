@@ -110,6 +110,7 @@ def _check_export(tmp: Path, cbz: Path) -> None:
 def _check_window(tmp: Path, cbz: Path) -> None:
     from PySide6.QtWidgets import QApplication
 
+    from mangareader.ui.icons import icon_pixmap
     from mangareader.ui.main_window import MainWindow
     from mangareader.ui.reader.controller import make_services
 
@@ -118,7 +119,9 @@ def _check_window(tmp: Path, cbz: Path) -> None:
     window.resize(900, 700)
     window.show()
     try:
-        assert window.open_paths([cbz])
+        assert window.is_library_shown(), "программа запустилась не на библиотеке"
+        assert not icon_pixmap("book", 24, "#ffffff").isNull(), "не загрузились иконки полок"
+        assert window.open_paths([cbz]) and not window.is_library_shown()
         deadline = time.monotonic() + 15
         while not window.view.page_item(0).has_scaled_image():
             assert time.monotonic() < deadline, "страница не отрисовалась за 15 секунд"
