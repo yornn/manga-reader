@@ -1,8 +1,11 @@
 name: Release
 
+# Runs when a v* tag is pushed, or by hand: Actions → Release → Run workflow.
+# A manual run publishes the version from src/mangareader/__init__.py as tag v<version>.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -31,5 +34,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $version = python -c "import mangareader; print(mangareader.__version__)"
+          $tag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "v$version" }
           $zip = Get-ChildItem MangaReader-*-win64.zip | Select-Object -First 1
-          gh release create $env:GITHUB_REF_NAME $zip.FullName --title "Manga Reader $env:GITHUB_REF_NAME" --notes-file packaging/release-notes.md
+          gh release create $tag $zip.FullName --target $env:GITHUB_SHA --title "Manga Reader $tag" --notes-file packaging/release-notes.md
+          if ($LASTEXITCODE -ne 0) { exit 1 }
