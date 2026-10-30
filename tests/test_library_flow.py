@@ -143,3 +143,9 @@ def test_scan_signals_after_close_do_not_touch_closed_store(make_window, qtbot):
     w.close()
     w.scanner.finished.emit()
     qtbot.wait(400)                                     # an error in a slot would fail the test here
+
+
+def test_window_can_be_narrow(window, cbz_1000x1500):
+    assert window.minimumSizeHint().width() <= 700         # the library, even with the empty-library hint
+    window.open_paths([cbz_1000x1500])
+    assert window.minimumSizeHint().width() <= 500         # reading in half of a laptop screen

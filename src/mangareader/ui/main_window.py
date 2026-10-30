@@ -70,6 +70,22 @@ class ElidedLabel(QLabel):
         self.setText(self.fontMetrics().elidedText(self._full, Qt.ElideMiddle, max(0, self.width() - 4)))
 
 
+class _Pages(QStackedWidget):
+    """Only the page on screen sets the window's minimum size: reading must fit half a laptop screen."""
+
+    def __init__(self):
+        super().__init__()
+        self.currentChanged.connect(lambda _: self.updateGeometry())
+
+    def minimumSizeHint(self) -> QSize:
+        page = self.currentWidget()
+        return page.minimumSizeHint() if page is not None else super().minimumSizeHint()
+
+    def sizeHint(self) -> QSize:
+        page = self.currentWidget()
+        return page.sizeHint() if page is not None else super().sizeHint()
+
+
 @contextmanager
 def _wait_cursor():
     QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -156,7 +172,7 @@ class MainWindow(QMainWindow):
         self.library_page = LibraryPage(self.services)
         self.settings_page = SettingsPage(self.services)
         self.library_page.set_settings_page(self.settings_page)
-        self.pages = QStackedWidget()
+        self.pages = _Pages()
         self.pages.addWidget(self.library_page)
         self.pages.addWidget(self.reader_page)
         self.setCentralWidget(self.pages)

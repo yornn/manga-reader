@@ -82,6 +82,8 @@ class LibraryPage(QWidget):
         for sort, text in ((Sort.RECENT, self.tr("Недавно открытые")), (Sort.TITLE, self.tr("По названию")),
                            (Sort.ADDED, self.tr("Недавно добавленные"))):
             self.sort_combo.addItem(text, sort)
+        self.sort_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.sort_combo.setMinimumContentsLength(6)
         self.sort_combo.currentIndexChanged.connect(lambda _: self._apply())
         top.addWidget(self.sort_combo)
         self.refresh_button = QToolButton()
@@ -103,11 +105,12 @@ class LibraryPage(QWidget):
 
         self.empty_hint = QWidget()
         hint = QHBoxLayout(self.empty_hint)
-        hint.addWidget(QLabel(self.tr("Добавьте папки с мангой в Настройках — библиотека заполнится сама")))
+        hint_label = QLabel(self.tr("Добавьте папки с мангой в Настройках — библиотека заполнится сама"))
+        hint_label.setWordWrap(True)
+        hint.addWidget(hint_label, 1)
         settings_button = QPushButton(self.tr("Открыть настройки"))
         settings_button.clicked.connect(self.settings_requested)
         hint.addWidget(settings_button)
-        hint.addStretch(1)
 
         tiles = QWidget()
         column = QVBoxLayout(tiles)
