@@ -350,9 +350,14 @@ class MainWindow(QMainWindow):
 
     def _open(self, path: Path, series: Path, *, root_id: int | None = None, series_id: int | None = None) -> bool:
         previous = self._series_id, self._series_path
+        from_library = self.is_library_shown()
         self._series_id = None                       # the old series must not get the new file's position
+        # a hidden stacked page keeps a stale size: show the reader first, so a book is laid out for the real view
+        self.pages.setCurrentWidget(self.reader_page)
         if not self.controller.open_path(path, series=series):
             self._series_id, self._series_path = previous
+            if from_library:
+                self.pages.setCurrentWidget(self.library_page)
             return False
         catalog = self.services.catalog
         self._series_id = series_id if series_id is not None else catalog.ensure_series(series, root_id)
@@ -634,6 +639,8 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self.scanner.stop()
+        self.scanner.blockSignals(True)           # a scan finishing now must not reload from the closed store
+        self._reload_timer.stop()
         self.controller.close_source()
         self.controller.blockSignals(True)        # a series scan finishing now must not touch the closed store
         QThreadPool.globalInstance().waitForDone(5000)

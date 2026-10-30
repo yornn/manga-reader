@@ -124,3 +124,22 @@ def test_settings_from_menu_and_back(window, qtbot, cbz_1000x1500):
     assert window.is_library_shown() and window.library_page.content.currentWidget() is window.settings_page
     window.library_page.nav.tree.itemClicked.emit(window.library_page.nav.item_for(Section()), 0)
     assert window.library_page.content.currentIndex() == 0
+
+
+def test_book_opened_from_library_is_laid_out_for_the_visible_view(window, tmp_path):
+    window.open_paths([make_epub(tmp_path / "b.epub", 200)])
+    viewport = window.view.viewport()
+    assert window.controller._book_layout[:2] == (max(200, viewport.width()), max(200, viewport.height()))
+
+
+def test_failed_open_from_library_stays_on_library(window, tmp_path):
+    assert not window.open_paths([tmp_path / "nope.cbz"])
+    assert window.is_library_shown()
+
+
+def test_scan_signals_after_close_do_not_touch_closed_store(make_window, qtbot):
+    w = make_window(qtbot)
+    w.scanner.series_updated.emit()                     # starts the delayed library reload
+    w.close()
+    w.scanner.finished.emit()
+    qtbot.wait(400)                                     # an error in a slot would fail the test here
