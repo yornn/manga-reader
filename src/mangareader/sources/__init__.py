@@ -23,4 +23,8 @@ def open_source(path: Path, ctx: SourceContext, password: str | None = None) -> 
         from mangareader.sources.folder import FolderSource
 
         return FolderSource(path)
+    if fmt in (Format.RAR, Format.SEVENZIP):
+        from mangareader.sources.sevenzip import SevenZipSource
+
+        return SevenZipSource(path, ctx, password)
     raise SourceError("Формат файла не поддерживается")
