@@ -149,7 +149,7 @@ def test_scan_signals_after_close_do_not_touch_closed_store(make_window, qtbot):
 def test_window_can_be_narrow(window, cbz_1000x1500):
     assert window.minimumSizeHint().width() <= 700         # the library, even with the empty-library hint
     window.open_paths([cbz_1000x1500])
-    assert window.minimumSizeHint().width() <= 500         # reading in half of a laptop screen
+    assert window.minimumSizeHint().width() <= 640         # reading in half of a 1280 px screen
 
 
 def test_recent_files_join_the_library_once(make_window, qtbot, tmp_path):

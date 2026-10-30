@@ -88,3 +88,16 @@ def test_reader_bar_never_hides_buttons(window, qtbot, tmp_path):
                    window.next_chapter_button, window.gear_button):
         assert button.isVisible(), button.text()           # nothing goes into a "»" overflow menu
     assert "…" in window.crumb_label.text()
+
+
+def test_reader_bar_shortens_labels_when_narrow(window, qtbot, cbz_1000x1500):
+    window.open_paths([cbz_1000x1500])
+    window.resize(360, 600)
+    qtbot.wait(100)
+    assert window.width() <= 400
+    assert [b.text() for b in (window.home_button, window.prev_chapter_button, window.next_chapter_button)] == \
+        ["⌂", "‹", "›"]
+    assert all(b.isVisible() for b in (window.home_button, window.gear_button, window.next_chapter_button))
+    window.resize(1100, 600)
+    qtbot.wait(100)
+    assert window.home_button.text() == "⌂ Главная" and window.next_chapter_button.text() == "Глава ›"

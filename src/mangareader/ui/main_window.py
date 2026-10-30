@@ -89,7 +89,8 @@ class _Pages(QStackedWidget):
 
 
 class ReaderBar(QWidget):
-    """The reader's top bar. Buttons keep their place; only the breadcrumb gives way when the window is narrow."""
+    """The reader's top bar. Buttons keep their place: when the window is narrow the breadcrumb shortens,
+    and the longer buttons drop their words ("⌂ Главная" → "⌂"), keeping them in the tooltip."""
 
     def __init__(self):
         super().__init__()
@@ -97,11 +98,38 @@ class ReaderBar(QWidget):
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(4, 2, 4, 2)
         self._layout.setSpacing(2)
+        self._shortened: list[tuple[QToolButton, str, str]] = []
+        self._compact = False
 
-    def add(self, widget: QWidget, stretch: int = 0) -> None:
+    def add(self, widget: QWidget, stretch: int = 0, short: str | None = None) -> None:
         if isinstance(widget, QToolButton):
             widget.setAutoRaise(True)
+            if short is not None:
+                self._shortened.append((widget, widget.text(), short))
         self._layout.addWidget(widget, stretch)
+
+    def _savings(self) -> int:
+        return sum(b.fontMetrics().horizontalAdvance(full) - b.fontMetrics().horizontalAdvance(short)
+                   for b, full, short in self._shortened)
+
+    def _full_width(self) -> int:
+        width = super().minimumSizeHint().width()
+        return width + self._savings() if self._compact else width
+
+    def minimumSizeHint(self) -> QSize:
+        # the narrowest the bar can be is with the short labels
+        size = super().minimumSizeHint()
+        if not self._compact:
+            size.setWidth(size.width() - self._savings())
+        return size
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        compact = self.width() < self._full_width()
+        if compact != self._compact:
+            self._compact = compact
+            for button, full, short in self._shortened:
+                button.setText(short if compact else full)
 
     def add_separator(self) -> None:
         line = QFrame()
@@ -170,7 +198,7 @@ class MainWindow(QMainWindow):
         self.home_button.setText(self.tr("⌂ Главная"))
         self.home_button.setToolTip(self.tr("Главная (Backspace)"))
         self.home_button.clicked.connect(self.go_home)
-        self.toolbar.add(self.home_button)
+        self.toolbar.add(self.home_button, short="⌂")
         self.focus_button = QToolButton()
         self.focus_button.setText("◧")
         self.focus_button.setToolTip(self.tr("Только страница: спрятать панели (вернуть — эта кнопка или Esc)"))
@@ -191,8 +219,9 @@ class MainWindow(QMainWindow):
         self.next_chapter_button.setText(self.tr("Глава ›"))
         self.next_chapter_button.setToolTip(self.tr("Следующая глава (Ctrl+PgDn)"))
         self.next_chapter_button.clicked.connect(lambda: self.controller.next_chapter())
-        for widget in (self.prev_chapter_button, self.page_label, self.next_chapter_button):
-            self.toolbar.add(widget)
+        self.toolbar.add(self.prev_chapter_button, short="‹")
+        self.toolbar.add(self.page_label)
+        self.toolbar.add(self.next_chapter_button, short="›")
         services = self.services
         self.nav_panel = NavPanel(services.loader, services.covers, services.store)
         self.nav_panel.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
