@@ -313,8 +313,18 @@ class MainWindow(QMainWindow):
         self.gear_button.setMenu(menu)
         self.gear_button.setPopupMode(QToolButton.InstantPopup)
         self.toolbar.addWidget(self.gear_button)
+        self._brightness_save = QTimer(self)
+        self._brightness_save.setSingleShot(True)
+        self._brightness_save.setInterval(500)
+        self._brightness_save.timeout.connect(self._save_settings)
         self.view.set_brightness(self.services.settings.brightness)
         self._sync_reader_settings()
+
+    def _save_settings(self) -> None:
+        try:
+            save_settings(self.services.settings, self.services.data.settings_file)
+        except OSError:
+            log.warning("cannot save settings", exc_info=True)
 
     def _sync_reader_settings(self) -> None:
         c = self.controller
@@ -331,7 +341,7 @@ class MainWindow(QMainWindow):
         settings = self.services.settings
         settings.brightness = max(MIN_BRIGHTNESS, min(100, percent))
         self.view.set_brightness(settings.brightness)
-        save_settings(settings, self.services.data.settings_file)
+        self._brightness_save.start()                 # written once the slider stops moving
 
     def _go_to_page(self) -> None:
         c = self.controller
@@ -490,6 +500,8 @@ class MainWindow(QMainWindow):
     def _toggle_sidebar(self) -> None:
         visible = not self.nav_panel.isVisible()
         self.nav_panel.setVisible(visible)
+        if self._focus:
+            self._nav_was_shown = visible             # leaving the page-only mode keeps this choice
         self.services.settings.sidebar_visible = visible
 
     # -- navigation panel -----------------------------------------------------------------------------------

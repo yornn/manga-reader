@@ -261,3 +261,14 @@ def test_esc_leaves_focus_mode(window, qtbot, cbz_1000x1500):
     window.set_focus_mode(True)
     qtbot.keyClick(window.view, Qt.Key_Escape)
     assert not window.focus_mode
+
+
+def test_tab_in_page_only_mode_is_kept(window, qtbot, cbz_1000x1500):
+    window.open_paths([cbz_1000x1500])
+    assert not window.nav_panel.isHidden()
+    window.set_focus_mode(True)
+    qtbot.keyClick(window.view, Qt.Key_Tab)              # show the panel while reading page-only
+    assert window.nav_panel.isVisible()
+    qtbot.keyClick(window.view, Qt.Key_Tab)              # and hide it again
+    window.set_focus_mode(False)
+    assert window.nav_panel.isHidden()                   # the last choice stays

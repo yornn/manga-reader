@@ -20,7 +20,7 @@ def test_brightness_dims_only_the_screen(window, qtbot, cbz_1000x1500):
     dim = shown()
     assert dim.red() <= bright.red() * 0.6 and dim.green() <= bright.green() * 0.6
     assert window.reader_settings.brightness_label.text() == "50%"
-    assert load_settings(window.services.data.settings_file).brightness == 50
+    qtbot.waitUntil(lambda: load_settings(window.services.data.settings_file).brightness == 50, timeout=2000)
     image, _ = window._render_target()                    # what gets saved or copied stays original
     original = page_image(1, (1000, 1500)).getpixel((500, 750))
     assert image.getpixel((image.width // 2, image.height // 2)) == original
@@ -54,3 +54,14 @@ def test_hotkeys_match_actions(window):
 
 def test_no_menu_bar(window):
     assert window.menuBar().actions() == []
+
+
+def test_brightness_saved_once_after_dragging(window, qtbot, monkeypatch, cbz_1000x1500):
+    import mangareader.ui.main_window as main_window
+    window.open_paths([cbz_1000x1500])
+    saves = []
+    monkeypatch.setattr(main_window, "save_settings", lambda settings, path: saves.append(settings.brightness))
+    for value in (90, 80, 70, 60):
+        window.reader_settings.brightness_slider.setValue(value)
+    assert window.services.settings.brightness == 60 and saves == []      # the screen follows at once
+    qtbot.waitUntil(lambda: saves == [60], timeout=2000)                  # the file is written once
