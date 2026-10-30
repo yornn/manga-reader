@@ -60,3 +60,16 @@ def cbz_spread(tmp_path):
 
     pages = {f"{i:03}.png": encode(page_image(i, (1000, 1500)), "PNG") for i in range(3)}
     return make_zip(tmp_path / "S" / "spread.cbz", pages)
+
+
+@pytest.fixture
+def services(qapp):
+    from mangareader.paths import resolve_data_location
+    from mangareader.ui.reader.controller import make_services
+
+    s = make_services(resolve_data_location())
+    yield s
+    from PySide6.QtCore import QThreadPool
+
+    QThreadPool.globalInstance().waitForDone(5000)
+    s.shutdown()
