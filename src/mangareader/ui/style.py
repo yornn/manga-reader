@@ -15,6 +15,7 @@ CONTINUE_CARD_WIDTH = 250
 READER_NAV_WIDTH = 300
 VOLUME_COVER = QSize(32, 45)
 NAV_THUMB = QSize(78, 112)
+FOCUS_EDGE = 12          # px from the top edge that bring the reader's bar back in page-only mode
 SHELF_ICON = 18
 DIALOG_ICON = 28
 UNAVAILABLE_OPACITY = 0.4

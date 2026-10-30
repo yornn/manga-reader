@@ -236,3 +236,28 @@ def test_chapter_buttons(window, qtbot, tmp_path):
     assert window.controller.entry.path.name == "c002.cbz"
     window.prev_chapter_button.click()
     assert window.controller.entry.path.name == "c001.cbz"
+
+
+def test_focus_mode_hides_chrome_and_keeps_layout(window, qtbot, cbz_1000x1500):
+    from PySide6.QtCore import QPoint
+    window.open_paths([cbz_1000x1500])
+    window.focus_button.click()
+    qtbot.wait(50)
+    assert window.focus_mode
+    assert not window.nav_panel.isVisible() and not window.slider.isVisible() and not window.toolbar.isVisible()
+    size = window.view.size()
+    qtbot.mouseMove(window.view.viewport(), QPoint(100, 3))
+    qtbot.waitUntil(window.toolbar.isVisible, timeout=1000)
+    assert window.view.size() == size                     # the bar floats over the page, books keep their layout
+    qtbot.mouseMove(window.view.viewport(), QPoint(100, 400))
+    qtbot.waitUntil(lambda: not window.toolbar.isVisible(), timeout=1000)
+    window.set_focus_mode(False)
+    qtbot.wait(50)
+    assert window.nav_panel.isVisible() and window.toolbar.isVisible() and window.slider.isVisible()
+
+
+def test_esc_leaves_focus_mode(window, qtbot, cbz_1000x1500):
+    window.open_paths([cbz_1000x1500])
+    window.set_focus_mode(True)
+    qtbot.keyClick(window.view, Qt.Key_Escape)
+    assert not window.focus_mode

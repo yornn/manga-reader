@@ -6,7 +6,7 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QSizePolicy,
                                QSlider, QSplitter, QStackedWidget, QToolBar, QToolButton, QVBoxLayout, QWidget,
@@ -120,6 +120,8 @@ class MainWindow(QMainWindow):
         self._series_id: int | None = None
         self._series_path: Path | None = None
         self._reader_actions: list[QAction] = []
+        self._focus = False
+        self._nav_was_shown = True
         self.scanner = ScanRunner(services, self)
         if not services.settings.recent_imported:
             # files opened before the library existed become series once
@@ -147,6 +149,11 @@ class MainWindow(QMainWindow):
         self.home_button.setToolTip(self.tr("Главная (Backspace)"))
         self.home_button.clicked.connect(self.go_home)
         self.toolbar.addWidget(self.home_button)
+        self.focus_button = QToolButton()
+        self.focus_button.setText("◧")
+        self.focus_button.setToolTip(self.tr("Только страница: спрятать панели (вернуть — эта кнопка или Esc)"))
+        self.focus_button.clicked.connect(lambda: self.set_focus_mode(not self._focus))
+        self.toolbar.addWidget(self.focus_button)
         self.toolbar.addSeparator()
         self.crumb_label = ElidedLabel()
         self.toolbar.addWidget(self.crumb_label)
@@ -178,6 +185,8 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.view)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([style.READER_NAV_WIDTH, 1000])
+        self.view.viewport().setMouseTracking(True)       # the page-only mode watches for the top edge
+        self.view.viewport().installEventFilter(self)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(0)
         self.slider.valueChanged.connect(self._on_slider)
@@ -356,6 +365,7 @@ class MainWindow(QMainWindow):
     def go_home(self) -> None:
         if self.selection.active:
             self.selection.deactivate()
+        self.set_focus_mode(False)
         self.controller.close_source()
         self._series_id = None
         self._series_path = None
@@ -510,8 +520,45 @@ class MainWindow(QMainWindow):
     def _escape(self) -> None:
         if self.selection.active:
             self.selection.deactivate()
+        elif self._focus:
+            self.set_focus_mode(False)
         else:
             self._leave_fullscreen()
+
+    # -- page-only mode ---------------------------------------------------------------------------------
+    @property
+    def focus_mode(self) -> bool:
+        return self._focus
+
+    def set_focus_mode(self, on: bool) -> None:
+        """Hide the panel, the top bar and the slider; the bar floats back over the page at the top edge."""
+        if on == self._focus:
+            return
+        self._focus = on
+        layout = self.reader_page.layout()
+        if on:
+            self._nav_was_shown = not self.nav_panel.isHidden()
+            self.nav_panel.hide()
+            self.slider.hide()
+            layout.removeWidget(self.toolbar)
+            self.toolbar.hide()
+        else:
+            layout.insertWidget(0, self.toolbar)
+            self.toolbar.show()
+            self.slider.show()
+            self.nav_panel.setVisible(self._nav_was_shown)
+
+    def eventFilter(self, watched, event) -> bool:
+        if self._focus and watched is self.view.viewport() and event.type() == QEvent.MouseMove:
+            y = event.position().y()
+            if y < style.FOCUS_EDGE and self.toolbar.isHidden():
+                height = self.toolbar.sizeHint().height()
+                self.toolbar.setGeometry(QRect(0, 0, self.reader_page.width(), height))
+                self.toolbar.show()
+                self.toolbar.raise_()
+            elif y > self.toolbar.height() + style.FOCUS_EDGE * 2 and not self.toolbar.isHidden():
+                self.toolbar.hide()
+        return super().eventFilter(watched, event)
 
     def _enter(self) -> None:
         if self.selection.active and self.selection.rect() is not None:
