@@ -41,6 +41,10 @@ class ImageCache:
             self._used += nbytes
             self._evict(keep=key)
 
+    @property
+    def budget(self) -> int:
+        return self._budget
+
     def set_budget(self, budget_bytes: int) -> None:
         with self._lock:
             self._budget = budget_bytes
