@@ -30,8 +30,9 @@ from mangareader.render.loader import pil_to_qimage
 from mangareader.sources.base import SourceError
 from mangareader.ui.reader.navigation import Position
 from mangareader.ui.reader.selection import SelectionTool, pages_union, render_selection
-from mangareader.ui.reader.sidebar import Sidebar
+from mangareader.ui.reader.nav_panel import NavPanel
 from mangareader.ui.reader.view import PageView, ZoomMode
+from mangareader.ui import style
 from mangareader.ui.theme import apply_theme
 from mangareader.ui.toast import Toast
 
@@ -107,19 +108,20 @@ class MainWindow(QMainWindow):
         self.page_label = QLabel()
         self.toolbar.addWidget(self.crumb_label)
         self.toolbar.addWidget(self.page_label)
-        self.sidebar = Sidebar(self.services.loader)
-        self.sidebar.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
-        self.sidebar.mark_requested.connect(self._add_mark)
-        self.sidebar.mark_edit_requested.connect(self._edit_mark)
-        self.sidebar.mark_delete_requested.connect(self.controller.delete_chapter_mark)
-        self.sidebar.kind_override_requested.connect(
+        services = self.services
+        self.nav_panel = NavPanel(services.loader, services.covers, services.store)
+        self.nav_panel.position_selected.connect(lambda e, p: self.controller.go_to(Position(e, p)))
+        self.nav_panel.mark_requested.connect(self._add_mark)
+        self.nav_panel.mark_edit_requested.connect(self._edit_mark)
+        self.nav_panel.mark_delete_requested.connect(self.controller.delete_chapter_mark)
+        self.nav_panel.kind_override_requested.connect(
             lambda index, kind: self.controller.set_kind_override(index, Kind(kind) if kind else None))
-        self.sidebar.setVisible(self.services.settings.sidebar_visible)
+        self.nav_panel.setVisible(services.settings.sidebar_visible)
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.addWidget(self.sidebar)
+        self.splitter.addWidget(self.nav_panel)
         self.splitter.addWidget(self.view)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([280, 1000])
+        self.splitter.setSizes([style.READER_NAV_WIDTH, 1000])
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(0)
         self.slider.valueChanged.connect(self._on_slider)
@@ -296,21 +298,24 @@ class MainWindow(QMainWindow):
             self.controller.go_to(Position(self.controller.entry_index, value))
 
     def _toggle_sidebar(self) -> None:
-        visible = not self.sidebar.isVisible()
-        self.sidebar.setVisible(visible)
+        visible = not self.nav_panel.isVisible()
+        self.nav_panel.setVisible(visible)
         self.services.settings.sidebar_visible = visible
 
-    # -- sidebar -----------------------------------------------------------------------------------
+    # -- navigation panel -----------------------------------------------------------------------------------
     def _on_source_opened(self) -> None:
         c = self.controller
         self.font_box.setVisible(bool(c.source and c.source.is_reflowable))
-        self.sidebar.set_tree(c.display_tree())
-        self.sidebar.set_source(c.source_key, len(c.source.pages), c.marks(), c.markable())
+        self.nav_panel.set_tree(c.display_tree())
+        self.nav_panel.set_source(c.source_key, c.entry_index, len(c.source.pages), c.marks(), c.markable())
 
     def _on_tree_changed(self) -> None:
-        self.sidebar.set_tree(self.controller.display_tree())
-        self.sidebar.set_marks(self.controller.marks())
-        self.sidebar.set_current(self.controller.position)
+        c = self.controller
+        self.nav_panel.set_marks(c.marks())
+        if c.source is not None:
+            self.nav_panel.set_source(c.source_key, c.entry_index, len(c.source.pages), c.marks(), c.markable())
+        self.nav_panel.set_tree(c.display_tree())
+        self.nav_panel.set_current(c.position)
 
     def _add_mark(self, page: int) -> None:
         entry = self.controller.entry
@@ -491,7 +496,7 @@ class MainWindow(QMainWindow):
         self.slider.setInvertedAppearance(c.direction is Direction.RTL)
         self.slider.setValue(c.page)
         self._slider_busy = False
-        self.sidebar.set_current(c.position)
+        self.nav_panel.set_current(c.position)
 
     def _show_error(self, message: str) -> None:
         errors.show_error(self, message, self.services.data.logs / LOG_NAME)
@@ -512,6 +517,7 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         self.controller.close_source()
+        self.controller.blockSignals(True)        # a series scan finishing now must not touch the closed store
         QThreadPool.globalInstance().waitForDone(5000)
         self.services.shutdown()
         super().closeEvent(event)

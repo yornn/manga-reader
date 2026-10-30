@@ -20,7 +20,7 @@ def test_font_change_keeps_position(window, qtbot, tmp_path):
     c.set_font_size(20)
     n2, p2 = len(c.source.pages), c.position.page
     assert n2 > n1 and abs(p2 / n2 - p1 / n1) < 0.1 and window.services.settings.book_font_size == 20
-    assert window.sidebar.thumb_view.model().rowCount() == n2
+    assert window.nav_panel.page_count == n2
 
 
 def test_resize_relayouts(window, qtbot, tmp_path):

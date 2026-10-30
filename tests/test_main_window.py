@@ -167,6 +167,6 @@ def test_opened_file_missing_from_tree_keeps_its_own_list(window, qtbot, tmp_pat
     (books / "notes.txt").write_text("заметки\n" * 50, encoding="utf-8")
     window.open_paths([books / "notes.txt"])
     qtbot.wait(1500)                                   # the series scan finishes (it skips .txt)
-    window.sidebar.position_selected.emit(1, 0)        # must not index past the controller's list
+    window.nav_panel.position_selected.emit(1, 0)        # must not index past the controller's list
     assert window.controller.entry.path.name == "notes.txt"
     assert [n.title for n in window.controller.display_tree().nodes] == ["notes"]

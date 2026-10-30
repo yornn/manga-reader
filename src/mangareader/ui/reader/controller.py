@@ -294,7 +294,8 @@ class ReaderController(QObject):
             return
         last = self.page >= len(self.source.pages) - 1 if self.mode is Mode.RIBBON else (
             group_index(self.groups, self.page) == len(self.groups) - 1)
-        self.services.store.set_progress(self.record.id, self.source.position_token(self.page), last)
+        fraction = 1.0 if last else (self.page + 1) / len(self.source.pages)
+        self.services.store.set_progress(self.record.id, self.source.position_token(self.page), last, fraction)
 
     def _on_size_known(self, key: str, page: int, w: int, h: int) -> None:
         if key != self.source_key or page >= len(self.sizes) or self.sizes[page] == (w, h):
