@@ -141,3 +141,22 @@ def test_enter_opens_tile(page, qtbot):
     with qtbot.waitSignal(page.open_series) as b:
         qtbot.keyClick(page.grid, Qt.Key_Return)
     assert b.args == [page.model.card_at(1).id]
+
+
+def test_open_menu_items_ask_for_a_file_or_folder(page, qtbot):
+    file_item, folder_item = page.open_menu().actions()
+    with qtbot.waitSignal(page.open_file_requested):
+        file_item.trigger()
+    with qtbot.waitSignal(page.open_folder_requested):
+        folder_item.trigger()
+
+
+def test_open_menu_reaches_the_file_dialogs(window, qtbot, monkeypatch, cbz_1000x1500):
+    from PySide6.QtWidgets import QFileDialog
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (asked.append("file"), "")[1:] + ("",))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: asked.append("folder") or "")
+    file_item, folder_item = window.library_page.open_menu().actions()
+    file_item.trigger()
+    folder_item.trigger()
+    assert asked == ["file", "folder"]

@@ -204,8 +204,8 @@ class LibraryPage(QWidget):
     # -- tiles --------------------------------------------------------------------------------------------
     def open_menu(self) -> QMenu:
         menu = QMenu(self)
-        menu.addAction(self.tr("Файл…"), self.open_file_requested)
-        menu.addAction(self.tr("Папку…"), self.open_folder_requested)
+        menu.addAction(self.tr("Файл…"), self.open_file_requested.emit)
+        menu.addAction(self.tr("Папку…"), self.open_folder_requested.emit)
         return menu
 
     def _on_tile_clicked(self, index: QModelIndex) -> None:
